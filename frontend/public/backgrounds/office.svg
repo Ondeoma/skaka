@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <!-- 背景: 明るい部屋（棚と植物） -->
+  <defs><linearGradient id="w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F3EEE6"/><stop offset="1" stop-color="#E4DCCF"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#w)"/>
+  <rect y="600" width="1280" height="120" fill="#C9B79C"/>
+  <rect x="80" y="140" width="300" height="12" rx="4" fill="#A88B66"/><rect x="80" y="290" width="300" height="12" rx="4" fill="#A88B66"/>
+  <g fill="#6F8F35"><rect x="100" y="80" width="26" height="60" rx="3"/><rect x="132" y="92" width="22" height="48" rx="3" fill="#2B6CB0"/><rect x="160" y="70" width="24" height="70" rx="3" fill="#DE3423"/></g>
+  <g fill="#E3A23A"><rect x="250" y="230" width="28" height="60" rx="3"/><rect x="284" y="244" width="22" height="46" rx="3" fill="#5FB3A1"/></g>
+  <circle cx="330" cy="120" r="18" fill="#F08A24"/>
+  <rect x="900" y="110" width="260" height="170" rx="10" fill="#FFFFFF" stroke="#D9CBB0" stroke-width="6"/>
+  <path d="M930 250l60-70 50 50 40-40 50 60z" fill="#BBD7FB"/><circle cx="1110" cy="160" r="20" fill="#F2B33D"/>
+  <path d="M1080 600q-10-130 30-200q40 70 30 200z" fill="#5E7F2E"/><path d="M1110 600q-60-80-40-170q60 60 50 170z" fill="#86A83E"/>
+  <rect x="1060" y="560" width="100" height="70" rx="10" fill="#B85E12"/>
+</svg>

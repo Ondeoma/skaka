@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <!-- 背景: skaka の台紙の色と芽の模様 -->
+  <rect width="1280" height="720" fill="#FFF4D6"/>
+  <defs><pattern id="p" width="160" height="160" patternUnits="userSpaceOnUse">
+    <path d="M80 90q-12-13-4-27q14 7 4 27z" fill="#D9572B" opacity=".18"/><path d="M80 90q13-10 21-4q-8 12-21 4z" fill="#F08A24" opacity=".18"/>
+    <path d="M0 10q-12-13-4-27q14 7 4 27z" fill="#D9572B" opacity=".18" transform="translate(0 150)"/></pattern></defs>
+  <rect width="1280" height="720" fill="url(#p)"/>
+</svg>

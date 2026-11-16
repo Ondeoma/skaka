@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <!-- 背景: 落ち着いた紺のグラデーション -->
+  <defs><radialGradient id="g" cx=".3" cy=".25" r="1"><stop offset="0" stop-color="#3B5BA9"/><stop offset=".6" stop-color="#1E2A4F"/><stop offset="1" stop-color="#0F172A"/></radialGradient></defs>
+  <rect width="1280" height="720" fill="url(#g)"/>
+  <g fill="#FFFFFF" opacity=".06"><circle cx="1100" cy="140" r="220"/><circle cx="180" cy="640" r="260"/></g>
+</svg>
