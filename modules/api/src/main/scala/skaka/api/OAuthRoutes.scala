@@ -126,21 +126,23 @@ final class OAuthRoutes(oauth: OAuthStore, clients: List[OAuthClient], val sessi
           }
 
     case req @ POST -> Root / "oauth" / "authorize" =>
-      req.as[UrlForm].flatMap { u =>
-        val p = (k: String) => u.getFirst(k).map(_.trim).filter(_.nonEmpty)
-        validate(p) match
-          case Left(r) => r
-          case Right((c, redirect, state, challenge)) =>
-            val csrfOk = req.cookies.find(_.name == CsrfCookie).exists(ck => p("csrf").exists(v => Crypto.constantTimeEquals(ck.content, v)))
-            sessions.fromRequest(req).map(_.filter(_.token.isEmpty)).flatMap {
-              case None               => errorPage("ログインが切れました。連携元の画面からやり直してください")
-              case Some(_) if !csrfOk => errorPage("画面の有効期限が切れました。連携元の画面からやり直してください")
-              case Some(s) if p("decision").contains("allow") =>
-                val code = Crypto.randomToken(32)
-                oauth.createCode(Crypto.sha256(code), OAuthCode(c.id, redirect, s.user.id, challenge, tokenScope(scopes(p))),
-                  Instant.now().plusSeconds(CodeTtlSeconds)) *> back(redirect, "code" -> Some(code), "state" -> state)
-              case Some(_) => back(redirect, "error" -> Some("access_denied"), "state" -> state)
-            }.map(_.removeCookie(ResponseCookie(CsrfCookie, "", path = Some("/oauth"))))
+      req.as[UrlForm].attempt.flatMap {
+        case Left(_) => errorPage("リクエストの内容が正しくありません")
+        case Right(u) =>
+          val p = (k: String) => u.getFirst(k).map(_.trim).filter(_.nonEmpty)
+          validate(p) match
+            case Left(r) => r
+            case Right((c, redirect, state, challenge)) =>
+              val csrfOk = req.cookies.find(_.name == CsrfCookie).exists(ck => p("csrf").exists(v => Crypto.constantTimeEquals(ck.content, v)))
+              sessions.fromRequest(req).map(_.filter(_.token.isEmpty)).flatMap {
+                case None               => errorPage("ログインが切れました。連携元の画面からやり直してください")
+                case Some(_) if !csrfOk => errorPage("画面の有効期限が切れました。連携元の画面からやり直してください")
+                case Some(s) if p("decision").contains("allow") =>
+                  val code = Crypto.randomToken(32)
+                  oauth.createCode(Crypto.sha256(code), OAuthCode(c.id, redirect, s.user.id, challenge, tokenScope(scopes(p))),
+                    Instant.now().plusSeconds(CodeTtlSeconds)) *> back(redirect, "code" -> Some(code), "state" -> state)
+                case Some(_) => back(redirect, "error" -> Some("access_denied"), "state" -> state)
+              }.map(_.removeCookie(ResponseCookie(CsrfCookie, "", path = Some("/oauth"))))
       }
 
     case req @ POST -> Root / "oauth" / "token" =>

@@ -7,7 +7,20 @@ skuaka と同じ（兄弟のシステムで揃えている）.
 - Authorization Code + PKCE（S256）+ nonce + state. ログイン途中の状態は DB の `login_state` に置き、15分・1回だけ使える.
 - ID トークンはトークンエンドポイントから受け取ったうえで **署名も検証する**（JWKS. `alg=none` は拒否）. `iss`・`aud`・`exp`・`nonce` を確かめる.
 - セッションはランダムな値の Cookie（HttpOnly・SameSite=Lax・https なら Secure）. DB にはその SHA-256 だけを保存する.
-- CSRF: GET 以外の API は `X-Skaka` の見出しが必要（ほかのサイトのフォームからは付けられない）. ログインしていない人（ゲスト）の入室の要求も同じ.
+- CSRF: GET 以外の API は `X-Skaka` の見出しが必要（ほかのサイトのフォームからは付けられない）. ログインしていない人（ゲスト）の入室・ログアウト・開発用のログインの要求も同じ.
+- ログイン・連携のあとの戻り先は、同じサイトのパスだけ（`SafePath`. `//`・`\`・制御文字を含むものは断る）.
+- IdP が `email_verified: false` としたメールアドレスは使わない（録画の共有の相手をメールで探すため）.
+- 開発用のログイン（`DEV_LOGIN`）は、`PUBLIC_URL` が手元（localhost など）のときだけ起動できる.
+
+### 応答の守り（`Guard`）
+
+- リクエストの本文は 1MB まで（録画の断片だけ 32MB まで）. Content-Length がなくても上限で読むのをやめる. 会議の WebSocket の1つのメッセージは 64KB まで.
+- 会議中のメッセージは、1つの接続から10秒に3000件まで（チャット・リアクションは40件まで）. 超えた分は捨てる.
+- すべての応答に `X-Content-Type-Options: nosniff`・`Referrer-Policy: same-origin`（会議室の URL を他のサイトに渡さない）.
+  HTML には `X-Frame-Options: DENY` と CSP（インラインのスクリプトは禁止. MediaPipe の WASM のため `wasm-unsafe-eval`、Worker の時計のため `blob:` だけを許す）.
+- ログインしていない人に見せる入口（`/api/rooms/{code}/entry`）では、持ち主のメールアドレスを出さない.
+- 録画は動画（WebM・MP4）だけを受け付け（skawau に置くときの Content-Type になる）、1人が同時に録れるのは1つ.
+- OAuth の認可コードが2回使われたら、漏れたものとして、そのコードで発行したトークンを失効させる.
 - ユーザーは `sub` で識別する. 初めてのログインで「自分の会議室」を作る.
 
 ## 会議室と会議

@@ -118,7 +118,7 @@ Docker: `scripts/dist.sh` のあと `docker build -f deploy/docker/app.Dockerfil
 | `OAUTH_CLIENTS` | skaka を使う外部のサービス（skuaka）. `[{"id":"skuaka","secret":"…（16文字以上）","redirectUri":"https://…/api/integrations/skaka/callback","name":"skuaka","scopes":["read","write"]}]` |
 | `HTTP_PORT` | 待ち受けるポート（既定 8080） |
 | `STATIC_DIR` | ビルド済みの画面（`dist/static`） |
-| `DEV_LOGIN` | 開発用のログインを有効にする（OIDC を設定しない場合のみ. 本番では使わない） |
+| `DEV_LOGIN` | 開発用のログインを有効にする（OIDC を設定せず、`PUBLIC_URL` が localhost などのときだけ. それ以外では起動しない） |
 
 ### 会議の通信（WebRTC）について
 

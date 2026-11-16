@@ -61,7 +61,8 @@ object IdToken:
       _   <- Either.cond(Crypto.constantTimeEquals(non, expectedNonce), (), "nonce mismatch")
       sub <- c.get[String]("sub").leftMap(_ => "missing sub")
     yield
-      val email = c.get[String]("email").toOption
+      // IdP が確かめていないと明示したメールアドレスは使わない（録画の共有の相手をメールで探すため）
+      val email = c.get[String]("email").toOption.filterNot(_ => c.get[Boolean]("email_verified").contains(false))
       val name = c.get[String]("name").toOption.filter(_.nonEmpty)
         .orElse(c.get[String]("preferred_username").toOption)
         .orElse(email)
@@ -154,6 +155,9 @@ object Jws:
         yield ()
       case _ => Left("malformed id_token")
 
+/** ログインを断った理由（画面にそのまま出してよい文言）. */
+final class LoginDenied(msg: String) extends RuntimeException(msg)
+
 /** ログインの結果. idToken はログアウトのとき IdP に渡す（id_token_hint）. */
 final case class LoginResult(identity: Identity, idToken: String)
 
@@ -228,7 +232,7 @@ final class OidcClient private (cfg: OidcConfig, http: Client[IO], meta: Ref[IO,
       claims  <- IO.fromEither(IdToken.decodeClaims(idToken).leftMap(new RuntimeException(_)))
       id      <- IO.fromEither(IdToken.validate(claims, m.issuer, cfg, nonce, now).leftMap(new RuntimeException(_)))
       _ <- IO.raiseUnless(cfg.allowedGroups.isEmpty || id.groups.exists(cfg.allowedGroups.contains))(
-             new RuntimeException("このサービスを使えるグループに所属していません"))
+             new LoginDenied("このサービスを使えるグループに所属していません"))
     yield LoginResult(id, idToken)
 
   /** IdP からもログアウトする URL（end_session_endpoint がなければ None）. */

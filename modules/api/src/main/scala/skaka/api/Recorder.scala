@@ -82,19 +82,26 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
       case (None, _) => IO.pure(Left(Status.Conflict -> "会議が開かれていません"))
       case (Some(l), _) if !l.peers.exists(p => p.userId.contains(u.id) && p.host) => IO.pure(Left(Status.Forbidden -> "録画できるのは会議中の主催者です"))
       case (Some(l), _) if l.recording.isDefined => IO.pure(Left(Status.Conflict -> s"${l.recording.get.by} さんが録画しています"))
+      // 中身の種類は skawau に置くときの Content-Type になる. 動画（WebM・MP4）だけを受け付ける
+      case _ if !Mimes.contains(baseMime(mime)) => IO.pure(Left(Status.BadRequest -> "録画の形式は WebM か MP4 にしてください"))
       case (Some(l), _) =>
-        for
-          now <- IO.realTimeInstant
-          rec  = Recording(UUID.randomUUID(), room.id, l.meetingId, u.id, s"${room.name} ${stamp(now, u.timezone)}".take(200),
-                   mime.takeWhile(_ != ';').trim.take(50), share, RecordingStatus.Recording, 0, None, now, None)
-          _   <- Files[IO].createDirectories(Path(client.cfg.dir))
-          _   <- Files[IO].createFile(file(rec.id))
-          _   <- store.create(rec)
-          mx  <- Mutex[IO]
-          _   <- active.update(_.updated(rec.id, Active(rec, 0, 0, now, mx)))
-          _   <- hub.recording(room.id, Some(RecordingNotice(rec.id, u.name, now.toString)), rec.id)
-        yield Right(rec)
+        active.get.map(_.values.exists(_.rec.userId == u.id)).ifM(
+          IO.pure(Left(Status.Conflict -> "別の会議室で録画しています。止めてから録画してください")),
+          begin(u, room, l, mime, share))
     }
+
+  private def begin(u: User, room: Room, l: skaka.core.Live, mime: String, share: Boolean): IO[Either[(Status, String), Recording]] =
+    for
+      now <- IO.realTimeInstant
+      rec  = Recording(UUID.randomUUID(), room.id, l.meetingId, u.id, s"${room.name} ${stamp(now, u.timezone)}".take(200),
+               baseMime(mime), share, RecordingStatus.Recording, 0, None, now, None)
+      _   <- Files[IO].createDirectories(Path(client.cfg.dir))
+      _   <- Files[IO].createFile(file(rec.id))
+      _   <- store.create(rec)
+      mx  <- Mutex[IO]
+      _   <- active.update(_.updated(rec.id, Active(rec, 0, 0, now, mx)))
+      _   <- hub.recording(room.id, Some(RecordingNotice(rec.id, u.name, now.toString)), rec.id)
+    yield Right(rec)
 
   /** 断片を足す（seq は 0 から順に. 送り直しで同じものが来たら受け流す）. 返すのはここまでの大きさ. */
   def append(u: User, id: UUID, seq: Int, data: Array[Byte]): IO[Either[(Status, String), Long]] =
@@ -203,7 +210,7 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
             root  <- sk(token, r.userId)(client.call(token, Method.GET, "/api/files/root"))
             folder <- EitherT.fromOption[IO](root.hcursor.downField("folder").get[UUID]("id").toOption, "skawau の応答を読めません")
             month  = DateTimeFormatter.ofPattern("yyyy-MM").withZone(ZoneId.of("Asia/Tokyo")).format(r.startedAt)
-            node  <- sk(token, r.userId)(client.put(token, folder, s"$Folder/$month", r.title.replace('/', '／') + ext(r.mime), body,
+            node  <- sk(token, r.userId)(client.put(token, folder, s"$Folder/$month", fileName(r.title) + ext(r.mime), body,
                        fixed.length + size - head.length, r.mime))
             fileId <- EitherT.fromOption[IO](node.hcursor.get[UUID]("id").toOption, "skawau の応答を読めません")
             shared <- EitherT.liftF(if r.share then r.meetingId.fold(IO.pure(0))(share(token, r.userId, fileId, _)) else IO.pure(0))
@@ -246,6 +253,15 @@ object Recorder:
 
   /** WebM の長さを直すときに読む先頭（Info はこの中にある）. */
   private val HeadBytes = 256L * 1024
+
+  /** 受け付ける録画の形式（MediaRecorder の mimeType の ; より前）. */
+  val Mimes: Set[String] = Set("video/webm", "video/mp4")
+
+  def baseMime(mime: String): String = mime.takeWhile(_ != ';').trim.toLowerCase
+
+  /** skawau に置くファイルの名前（会議室の名前から. パスの区切り・制御文字を除く）. */
+  def fileName(title: String): String =
+    title.map(c => if c == '/' then '／' else if c == '\\' then '＼' else c).filterNot(_.isControl).trim.stripPrefix(".")
 
   def ext(mime: String): String = if mime.contains("mp4") then ".mp4" else if mime.contains("ogg") then ".ogg" else ".webm"
 

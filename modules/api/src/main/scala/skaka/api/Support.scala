@@ -149,6 +149,48 @@ object Check:
     val t = v.trim
     if t.isEmpty then Left(s"$what を入れてください") else text(t, what, max)
 
+/**
+ * 応答の安全のための共通の処理: リクエストの本文の大きさの上限と、セキュリティのヘッダー.
+ * 本文は録画の断片だけ大きくてよく、ほかは JSON・フォームなので 1MB まで（メモリを使い切らせない）.
+ */
+object Guard:
+  val MaxBody: Long = 1024 * 1024
+
+  private def limitOf(req: Request[IO]): Long = req.pathInfo.segments.map(_.decoded()).toList match
+    case "api" :: "recordings" :: _ :: "chunks" :: _ :: Nil => Recorder.MaxChunk.toLong
+    case _                                                => MaxBody
+
+  /** 画面（index.html）の CSP. MediaPipe の WASM（wasm-unsafe-eval）、Worker の時計（blob:）、背景の画像（data:）、IdP のアバター（https:）を許す. */
+  val PageCsp: String = List(
+    "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "worker-src 'self' blob:", "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:", "media-src 'self' blob:", "connect-src 'self'", "font-src 'self'", "object-src 'none'",
+    "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'").mkString("; ")
+
+  def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = cats.data.Kleisli { (req: Request[IO]) =>
+    val limit = limitOf(req)
+    if req.contentLength.exists(_ > limit) then
+      cats.data.OptionT.liftF(IO.pure(Response[IO](Status.PayloadTooLarge).withEntity(ErrorDto("リクエストが大きすぎます"))))
+    else
+      // Content-Length がなく（chunked で）送られても、上限を超えたところで止める
+      val body = req.body.chunks.evalMapAccumulate(0L) { (n, c) =>
+        val m = n + c.size
+        if m > limit then IO.raiseError(new BodyTooLarge) else IO.pure(m -> c)
+      }.flatMap((_, c) => fs2.Stream.chunk(c))
+      routes(req.withBodyStream(body)).map(secure)
+  }
+
+  /** どの応答にも付けるヘッダー（HTML には CSP も. 個別に付けたものはそのまま）. */
+  def secure(r: Response[IO]): Response[IO] =
+    val html = r.contentType.exists(_.mediaType == MediaType.text.html)
+    val base = r.putHeaders("X-Content-Type-Options" -> "nosniff", "Referrer-Policy" -> "same-origin")
+    if !html then base
+    else
+      val csp = if r.headers.get(CIString("Content-Security-Policy")).isDefined then Nil else List[Header.ToRaw]("Content-Security-Policy" -> PageCsp)
+      base.putHeaders(("X-Frame-Options" -> "DENY": Header.ToRaw) :: csp*)
+
+/** 本文が上限を超えた（Guard）. */
+final class BodyTooLarge extends RuntimeException("リクエストが大きすぎます")
+
 /** アプリのルートをまとめる（REST API・会議の WebSocket・MCP）. MCP は REST API をトークンで内部から呼ぶ. */
 object ApiRoutes:
   /** recorder は skawau（録画の保存先）を設定したときだけ. */

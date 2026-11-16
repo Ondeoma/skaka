@@ -12,6 +12,14 @@ import java.util.UUID
 
 final case class ErrorDto(error: String) derives Encoder.AsObject, Decoder
 
+/** ログイン・連携のあとに戻る先（同じサイトのパスだけ. 他のサイトへ飛ばされないよう、// や \・制御文字を含むものは断る）. */
+object SafePath {
+  def check(p: String): Option[String] =
+    Option(p).filter(s => s.startsWith("/") && !s.startsWith("//") && !s.exists(c => c == '\\' || c.isControl))
+
+  def orElse(p: Option[String], default: String = "/"): String = p.flatMap(check).getOrElse(default)
+}
+
 /** skuaka・skawau はそれぞれ連携する skuaka（カレンダー）・skawau（ファイル共有. 録画の保存先）の URL（連携しなければ None）. */
 final case class ClientConfigDto(devLogin: Boolean, oidc: Boolean, version: String, skuaka: Option[String], skawau: Option[String] = None)
     derives ConfiguredCodec

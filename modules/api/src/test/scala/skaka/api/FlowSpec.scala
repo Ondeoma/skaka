@@ -169,6 +169,8 @@ class FlowSpec extends munit.CatsEffectSuite:
       // 入る前の画面はゲストにも見える（ゲスト可の会議室だけ）
       en <- call(None, Method.GET, s"/api/rooms/${r.code}/entry").flatMap(json[RoomEntryDto])
       _   = assertEquals((en.name, en.me, en.guestAccess), ("週次", None, true))
+      // ログインしていない人には、持ち主のメールアドレスを見せない
+      _   = assertEquals((en.owner.name, en.owner.email), ("主催 花子", None))
       // 切符には ICE サーバー（STUN と、一時的な TURN の認証情報）
       ja <- join(Some(a), r.code)
       _   = assertEquals(ja.iceServers.size, 2)
@@ -348,6 +350,9 @@ class FlowSpec extends munit.CatsEffectSuite:
       _   <- cb2.await { case w: ServerMsg.Welcome => () }
       nb  <- call(b, Method.POST, "/api/recordings", RecordingStartReq(r.code, "video/webm").asJson)
       _    = assertEquals(nb.status, Status.Conflict) // b は skawau と連携していない
+      // 動画以外の形式は断る（skawau に置くときの Content-Type になるため）
+      html <- call(a, Method.POST, "/api/recordings", RecordingStartReq(r.code, "text/html").asJson)
+      _    = assertEquals(html.status, Status.BadRequest)
       rec <- call(a, Method.POST, "/api/recordings", RecordingStartReq(r.code, "video/webm;codecs=vp8,opus").asJson).flatMap(json[RecordingDto])
       _    = assertEquals((rec.status, rec.mine, rec.title.startsWith("録画する会議 ")), (RecordingStatus.Recording, true, true))
       on  <- cb2.await { case ServerMsg.Recording(n) => n }
@@ -465,8 +470,6 @@ class FlowSpec extends munit.CatsEffectSuite:
       tk   <- token(code).flatMap(json[Json])
       at    = tk.hcursor.get[String]("access_token").getOrElse("")
       _     = assertEquals((at.startsWith("skaka_"), tk.hcursor.get[String]("scope")), (true, Right("write")))
-      again <- token(code)
-      _     = assertEquals(again.status, Status.BadRequest) // コードは1回だけ
       // トークンで、予定の写し付きの会議室を作る（skuaka の予定の場所に URL を入れる）
       ev    = RoomEventDto(UUID.randomUUID(), "設計レビュー", "2026-11-20T01:00:00Z", "2026-11-20T02:00:00Z", allDay = false)
       room <- call(Some(at), Method.POST, "/api/rooms", Some(RoomReq("設計レビュー", event = Some(ev)).asJson)).flatMap(json[RoomDto])
@@ -488,6 +491,50 @@ class FlowSpec extends munit.CatsEffectSuite:
       _    <- f.app.run(Request[IO](Method.POST, uri"/oauth/revoke").withEntity(UrlForm("token" -> at)).putHeaders(basic))
       gone <- call(Some(at), Method.GET, "/api/rooms")
       _     = assertEquals(gone.status, Status.Unauthorized)
+      // コードは1回だけ. もう一度使われたら（漏れた）、そのコードで発行したトークンも失効させる
+      ok2  <- f.app.run(Request[IO](Method.POST, uri"/oauth/authorize").withEntity(form)
+                .putHeaders(Cookie(RequestCookie("skaka_session", a), RequestCookie("skaka_oauth_csrf", csrf))))
+      code2 = location(ok2).params("code")
+      at2  <- token(code2).flatMap(json[Json]).map(_.hcursor.get[String]("access_token").getOrElse(""))
+      live <- call(Some(at2), Method.GET, "/api/rooms")
+      _     = assertEquals(live.status, Status.Ok)
+      again <- token(code2)
+      _     = assertEquals(again.status, Status.BadRequest)
+      dead <- call(Some(at2), Method.GET, "/api/rooms")
+      _     = assertEquals(dead.status, Status.Unauthorized)
+    yield ()
+  }
+
+  test("守り: 本文の大きさの上限・セキュリティのヘッダー・ログアウトの CSRF・メッセージの連投") {
+    val echo = Guard(HttpRoutes.of[IO] {
+      case req @ POST -> Root / "api" / "echo" => req.bodyText.compile.string.flatMap(t => Ok(t.length.toString))
+      case GET -> Root / "page"                => IO.pure(TextResponse(Status.Ok, "<p>hi</p>", MediaType.text.html))
+    }).orNotFound
+    val big = "x" * (Guard.MaxBody.toInt + 1)
+    for
+      small <- echo.run(Request[IO](Method.POST, uri"/api/echo").withEntity("hello"))
+      _      = assertEquals(small.status, Status.Ok)
+      // Content-Length で分かるときはすぐ断る. 分からない（chunked）ときは上限を超えたところで止める
+      large <- echo.run(Request[IO](Method.POST, uri"/api/echo").withEntity(big))
+      _      = assertEquals(large.status, Status.PayloadTooLarge)
+      chunked <- echo.run(Request[IO](Method.POST, uri"/api/echo").withBodyStream(fs2.Stream.emits(big.getBytes).covary[IO])).attempt
+      _      = assert(chunked.left.exists(_.isInstanceOf[BodyTooLarge]), chunked)
+      page  <- echo.run(Request[IO](Method.GET, uri"/page"))
+      _      = assertEquals(List("X-Frame-Options", "X-Content-Type-Options").map(h => page.headers.get(CIString(h)).map(_.head.value)),
+                 List(Some("DENY"), Some("nosniff")))
+      _      = assert(page.headers.get(CIString("Content-Security-Policy")).exists(_.head.value.contains("frame-ancestors 'none'")))
+      // ログアウトは画面からだけ（他のサイトに送らせない）
+      a     <- login("守り", "guard@example.com")
+      out   <- fixture().app.run(Request[IO](Method.POST, uri"/auth/logout").putHeaders(Cookie(RequestCookie("skaka_session", a))))
+      _      = assertEquals(out.status, Status.Forbidden)
+      still <- call(a, Method.GET, "/api/me")
+      _      = assertEquals(still.status, Status.Ok)
+      // 会議のメッセージ: チャットは10秒に40件まで
+      fl    <- Flood.create
+      oks   <- (1 to 45).toList.traverse(_ => fl.allow(ClientMsg.Chat("hi")))
+      _      = assertEquals(oks.count(identity), Flood.MaxBroadcasts)
+      ping  <- fl.allow(ClientMsg.Ping())
+      _      = assert(ping)
     yield ()
   }
 

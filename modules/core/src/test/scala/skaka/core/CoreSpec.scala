@@ -26,6 +26,13 @@ class CoreSpec extends munit.FunSuite:
       (l2, fx ++ fx2)
     }
 
+  test("戻り先は同じサイトのパスだけ（他のサイトへ飛ばさない）") {
+    assertEquals(List("/r/abc", "/settings?x=1").map(SafePath.check), List(Some("/r/abc"), Some("/settings?x=1")))
+    for p <- List("//evil.example", "/\\evil.example", "/\tevil", "https://evil.example", "javascript:alert(1)", "", null) do
+      assertEquals(SafePath.check(p), None, p)
+    assertEquals(SafePath.orElse(Some("//x"), "/settings"), "/settings")
+  }
+
   test("最初の人が入ると会議が始まる. 持ち主は主催者. 後から来た人に知らせる") {
     val (l, fx) = withPeers()(peer("a", Some(owner)), peer("b", Some(other)))
     assertEquals(l.peers.map(p => (p.id, p.host)), Vector(("a", true), ("b", false)))

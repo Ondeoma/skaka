@@ -95,7 +95,7 @@ final class RoomRoutes(d: ApiRoutes.Deps) extends RouteSupport:
     case req @ GET -> Root / "api" / "rooms" / code / "entry" =>
       optional(req)(me => withRoom(code) { (r, o) =>
         if me.isEmpty && !r.guestAccess then err(Status.Unauthorized, "ログインしてください")
-        else hub.live(r.id).flatMap(l => Ok(RoomEntryDto(r.code, r.name, o, r.guestAccess, l.fold(0)(_.peers.size), l.exists(_.locked),
+        else hub.live(r.id).flatMap(l => Ok(RoomEntryDto(r.code, r.name, if me.isEmpty then o.copy(email = None) else o, r.guestAccess, l.fold(0)(_.peers.size), l.exists(_.locked),
           me.map(_.me), r.event)))
       })
 
@@ -145,10 +145,38 @@ object SignalRoutes:
         hub.connect(ticket).flatMap {
           case None => Forbidden(ErrorDto("入るための切符が使えません（期限切れ）。入り直してください"))
           case Some((peer, q)) =>
-            val send = Stream.fromQueueNoneTerminated(q).map(m => WebSocketFrame.Text(m.asJson.noSpaces)) ++ Stream.emit(WebSocketFrame.Close())
-            val receive: fs2.Pipe[IO, WebSocketFrame, Unit] = _.collect { case WebSocketFrame.Text(t, _) if t.length <= MaxFrame => t }
-              .evalMap(t => decode[ClientMsg](t).fold(_ => IO.unit, hub.receive(peer, _)))
-              .onFinalize(hub.disconnect(peer))
-            ws.withOnClose(hub.disconnect(peer)).build(send, receive)
+            Flood.create.flatMap { flood =>
+              val send = Stream.fromQueueNoneTerminated(q).map(m => WebSocketFrame.Text(m.asJson.noSpaces)) ++ Stream.emit(WebSocketFrame.Close())
+              val receive: fs2.Pipe[IO, WebSocketFrame, Unit] = _.collect { case WebSocketFrame.Text(t, _) if t.length <= MaxFrame => t }
+                .evalMap(t => decode[ClientMsg](t).fold(_ => IO.unit, m => flood.allow(m).ifM(hub.receive(peer, m), IO.unit)))
+                .onFinalize(hub.disconnect(peer))
+              ws.withOnClose(hub.disconnect(peer)).build(send, receive)
+            }
         }
     }
+
+/**
+ * 1つの接続から受け付けるメッセージの数の上限（10秒ごと. 超えた分は捨てる）. 全員に送られるチャット・リアクションは少なめに.
+ * 中継（SDP・ICE）は、大人数で入った直後にまとめて届くので多めにしてある.
+ */
+final class Flood private (ref: Ref[IO, (Long, Int, Int)]):
+  import Flood.*
+
+  def allow(m: ClientMsg): IO[Boolean] = IO.monotonic.flatMap { t =>
+    val now   = t.toMillis
+    val broad = m match
+      case _: ClientMsg.Chat | _: ClientMsg.React => true
+      case _                                      => false
+    ref.modify { (start, all, chat) =>
+      val (s, a, c) = if now - start >= WindowMillis then (now, 0, 0) else (start, all, chat)
+      val ok        = a < MaxMessages && (!broad || c < MaxBroadcasts)
+      ((s, a + 1, if broad then c + 1 else c), ok)
+    }
+  }
+
+object Flood:
+  val WindowMillis  = 10000L
+  val MaxMessages   = 3000
+  val MaxBroadcasts = 40
+
+  def create: IO[Flood] = IO.monotonic.flatMap(t => Ref.of[IO, (Long, Int, Int)]((t.toMillis, 0, 0))).map(new Flood(_))

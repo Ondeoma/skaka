@@ -11,7 +11,7 @@ case class State(name: RV[String] = RV(""), email: RV[String] = RV(""), error: R
 def initState() = State()
 
 def param(k: String): Option[String] = Option(new dom.URL(dom.window.location.href).searchParams.get(k))
-def returnTo(): String = param("returnTo").filter(p => p.startsWith("/") && !p.startsWith("//")).getOrElse("/")
+def returnTo(): String = skaka.shared.SafePath.orElse(param("returnTo"))
 def loggedOut: Boolean = param("loggedOut").isDefined
 
 def login(s: State): Unit =

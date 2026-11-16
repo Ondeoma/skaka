@@ -36,12 +36,17 @@ object Config:
       io.circe.parser.parse(s).flatMap(_.as[List[io.circe.Json]]).left.map(_ => "OAUTH_CLIENTS は JSON の配列で指定してください").flatMap(_.traverse { j =>
         val c = j.hcursor
         (c.get[String]("id"), c.get[String]("secret"), c.get[String]("redirectUri")).tupled.toOption
-          .filter((id, sec, uri) => id.nonEmpty && sec.length >= 16 && (uri.startsWith("https://") || uri.startsWith("http://localhost")))
+          .filter((id, sec, uri) => id.nonEmpty && sec.length >= 16 && (uri.startsWith("https://") || local(uri)))
           .map((id, sec, uri) => OAuthClient(id, sec, uri, c.get[String]("name").getOrElse(id), c.get[List[String]]("scopes").getOrElse(List("read"))))
           .filter(c => c.scopes.nonEmpty && c.scopes.forall(Set("read", "write")))
           .toRight("OAUTH_CLIENTS の各要素には id・secret（16文字以上）・redirectUri（https://）を指定してください（scopes は read・write）")
       })
     }
+
+  /** 手元の URL か（http://localhost・127.0.0.1・*.localhost）. */
+  private def local(url: String): Boolean =
+    org.http4s.Uri.fromString(url).toOption.exists(u => u.host.map(_.value.toLowerCase).exists(h =>
+      h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.endsWith(".localhost")))
 
   def load: IO[AppConfig] = IO.fromEither(
     (for
@@ -50,6 +55,8 @@ object Config:
       dbPass <- required("DATABASE_PASSWORD")
       pub    <- required("PUBLIC_URL").map(_.stripSuffix("/"))
       devLogin = enabled("DEV_LOGIN")
+      // 開発用のログインは名前だけでだれにでもなれるので、手元（localhost）の URL でしか使わせない
+      _ <- Either.cond(!devLogin || local(pub), (), "DEV_LOGIN は開発用です。PUBLIC_URL が http://localhost など手元の URL のときだけ使えます")
       ice <- opt("ICE_SERVERS").fold(Right(IceConfig().servers))(j =>
                io.circe.parser.decode[List[IceServer]](j).left.map(e => s"ICE_SERVERS を読めません（JSON の配列 [{\"urls\": [...]}]）: ${e.getMessage}"))
       clients <- oauthClients
@@ -120,11 +127,13 @@ object Main extends IOApp.Simple:
         _ <- purgeLoop(users).background
         app = healthRoutes(xa) <+> ApiRoutes(ApiRoutes.Deps(oidc, users, rooms, meetings, new LinkStore(xa), hub, skuaka, box, sess, cfg.api,
                 recs, sklinks, new OAuthStore(xa), recorder))
-        all = cfg.staticDir.fold(app)(d => app <+> spa(d))
+        all = Guard(cfg.staticDir.fold(app)(d => app <+> spa(d)))
         _ <- EmberServerBuilder.default[IO]
                .withHost(ipv4"0.0.0.0")
                .withPort(Port.fromInt(cfg.port).getOrElse(port"8080"))
                .withShutdownTimeout(5.seconds)
+               // 会議のやり取りの1つのメッセージの上限（大きなフレームでメモリを使い切らせない）
+               .withMaxWebSocketMessageSize(SignalRoutes.MaxFrame)
                .withHttpWebSocketApp(ws => ErrorHandling.Custom.recoverWith((SignalRoutes(hub, ws) <+> all).orNotFound)(handler))
                .build
         _ <- Resource.eval(IO.println(s"[skaka] listening on :${cfg.port} (${cfg.api.publicUrl})"))
@@ -140,13 +149,15 @@ object Main extends IOApp.Simple:
 
   private def healthRoutes(xa: doobie.Transactor[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / "healthz" =>
-      sql"select 1".query[Int].unique.transact(xa).timeout(3.seconds).attempt.map {
-        case Right(_) => TextResponse(Status.Ok, "ok")
-        case Left(e)  => TextResponse(Status.ServiceUnavailable, s"database unavailable: ${e.getMessage}")
+      sql"select 1".query[Int].unique.transact(xa).timeout(3.seconds).attempt.flatMap {
+        case Right(_) => IO.pure(TextResponse(Status.Ok, "ok"))
+        case Left(e)  => IO.println(s"[skaka] healthz: $e").as(TextResponse(Status.ServiceUnavailable, "database unavailable"))
       }
   }
 
-  private val handler: PartialFunction[Throwable, IO[Response[IO]]] = { case e =>
+  private val handler: PartialFunction[Throwable, IO[Response[IO]]] = {
+    case _: BodyTooLarge => PayloadTooLarge(ErrorDto("リクエストが大きすぎます"))
+    case e =>
     IO.println(s"[skaka] unhandled error: $e") *> InternalServerError(ErrorDto("サーバーでエラーが発生しました"))
   }
 

@@ -28,7 +28,7 @@ final class SkawauRoutes(d: ApiRoutes.Deps) extends RouteSupport:
 
   /** 設定の画面へ戻る（結果を skawau=… に付ける）. 戻り先は同じサイトのパスだけ. */
   private def done(returnTo: String, result: String): IO[Response[IO]] =
-    val back = Option(returnTo).filter(p => p.startsWith("/") && !p.startsWith("//")).getOrElse("/settings")
+    val back = SafePath.orElse(Option(returnTo), "/settings")
     redirect(back + (if back.contains("?") then "&" else "?") + s"skawau=$result")
 
   private def withClient(f: SkawauClient => IO[Response[IO]]): IO[Response[IO]] =
@@ -57,7 +57,7 @@ final class SkawauRoutes(d: ApiRoutes.Deps) extends RouteSupport:
       interactive(req)(u => withClient { c =>
         val state    = Crypto.randomToken(24)
         val verifier = Crypto.randomToken(48)
-        links.saveState(state, u.id, verifier, param(req, "returnTo").getOrElse("/settings"), Instant.now().plusSeconds(600)) *>
+        links.saveState(state, u.id, verifier, SafePath.orElse(param(req, "returnTo"), "/settings"), Instant.now().plusSeconds(600)) *>
           redirect(Uri.unsafeFromString(s"${c.cfg.url}/oauth/authorize").withQueryParams(Map(
             "response_type" -> "code", "client_id" -> c.cfg.clientId, "redirect_uri" -> callback, "scope" -> "read write", "state" -> state,
             "code_challenge" -> Crypto.pkceChallenge(verifier), "code_challenge_method" -> "S256")).renderString)

@@ -18,10 +18,6 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
   import d.{oidc, users, rooms, cfg}
   val sessions: SessionAuth = d.sessions
 
-  /** ログイン後に戻る先（同じサイトのパスだけ）. */
-  private def safeReturn(s: Option[String]): String =
-    s.filter(p => p.startsWith("/") && !p.startsWith("//") && !p.startsWith("/\\")).getOrElse("/")
-
   private def redirect(to: String, cookie: Option[ResponseCookie] = None): IO[Response[IO]] =
     val r = Response[IO](Status.Found).putHeaders(Location(Uri.unsafeFromString(to)), "Cache-Control" -> "no-store")
     IO.pure(cookie.fold(r)(r.addCookie))
@@ -40,7 +36,7 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "auth" / "login" =>
-      val back = safeReturn(param(req, "returnTo"))
+      val back = SafePath.orElse(param(req, "returnTo"))
       oidc match
         case Some(o) =>
           val state = Crypto.randomToken(); val verifier = Crypto.randomToken(48); val nonce = Crypto.randomToken()
@@ -52,15 +48,18 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
     case req @ GET -> Root / "auth" / "callback" =>
       (oidc, param(req, "code"), param(req, "state"), param(req, "error")) match
         case (_, _, _, Some(e)) =>
-          page("ログインできませんでした", s"IdP がログインを断りました（$e ${param(req, "error_description").getOrElse("")}）", Status.Unauthorized)
+          page("ログインできませんでした", s"IdP がログインを断りました（${e.take(100)} ${param(req, "error_description").getOrElse("").take(200)}）", Status.Unauthorized)
         case (Some(o), Some(code), Some(state), None) =>
           users.takeLoginState(state).flatMap {
             case None => page("ログインできませんでした", "ログインの有効期限が切れました。もう一度ログインしてください。", Status.BadRequest)
             case Some((verifier, nonce, back)) =>
               o.authenticate(code, verifier, nonce, Instant.now()).attempt.flatMap {
                 case Left(e) =>
-                  IO.println(s"[skaka] login failed: ${e.getMessage}") *>
-                    page("ログインできませんでした", e.getMessage, Status.Unauthorized)
+                  // 画面には、本人に知らせてよい理由（LoginDenied）だけを出す. ほかの詳細はサーバーのログへ
+                  val msg = e match
+                    case d: skaka.auth.LoginDenied => d.getMessage
+                    case _                         => "IdP からの応答を確かめられませんでした。しばらくしてからもう一度お試しください。"
+                  IO.println(s"[skaka] login failed: ${e.getMessage}") *> page("ログインできませんでした", msg, Status.Unauthorized)
                 case Right(res) =>
                   val id = res.identity
                   users.upsert(id.sub, id.name, id.email, id.picture).flatMap { u =>
@@ -73,6 +72,10 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
         case _               => err(Status.BadRequest, "code と state が必要です")
 
     // ログアウト: セッションを消し、IdP にもログアウトを頼む（end_session_endpoint があれば）
+    // ログアウト・開発用のログインも、他のサイトから送らせない（CSRF）
+    case req @ POST -> Root / "auth" / ("logout" | "dev-login") if !fromScreen(req) =>
+      err(Status.Forbidden, "画面以外からの要求は受け付けません")
+
     case req @ POST -> Root / "auth" / "logout" =>
       sessions.revoke(req).flatMap { (idToken, c) =>
         oidc.traverse(_.logoutUri(idToken, cfg.publicUrl + "/")).map(_.flatten).flatMap { idp =>
@@ -90,7 +93,7 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
           for
             u  <- users.upsert(s"dev:$name", name, c.get[String]("email").toOption.map(_.trim).filter(_.contains("@")), None)
             ck <- loggedIn(u, None)
-            r  <- Ok(Json.obj("redirect" -> safeReturn(c.get[String]("returnTo").toOption).asJson)).map(_.addCookie(ck))
+            r  <- Ok(Json.obj("redirect" -> SafePath.orElse(c.get[String]("returnTo").toOption).asJson)).map(_.addCookie(ck))
           yield r
       }
 
