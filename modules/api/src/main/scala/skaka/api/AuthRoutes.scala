@@ -25,6 +25,7 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
   /** ログインした人の会議室を用意してから、セッションを発行する. */
   private def loggedIn(u: User, idToken: Option[String]): IO[ResponseCookie] =
     rooms.ensurePersonal(u) *> sessions.issue(u, idToken)
+      .flatTap(_ => skaka.observe.Metrics.count("skaka.logins", "via" -> (if idToken.isDefined then "oidc" else "dev")))
 
   private def page(title: String, msg: String, status: Status): IO[Response[IO]] =
     val esc = (s: String) => s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -59,7 +60,7 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
                   val msg = e match
                     case d: skaka.auth.LoginDenied => d.getMessage
                     case _                         => "IdP からの応答を確かめられませんでした。しばらくしてからもう一度お試しください。"
-                  IO.println(s"[skaka] login failed: ${e.getMessage}") *> page("ログインできませんでした", msg, Status.Unauthorized)
+                  skaka.observe.Log.println(s"[skaka] login failed: ${e.getMessage}") *> page("ログインできませんでした", msg, Status.Unauthorized)
                 case Right(res) =>
                   val id = res.identity
                   users.upsert(id.sub, id.name, id.email, id.picture).flatMap { u =>

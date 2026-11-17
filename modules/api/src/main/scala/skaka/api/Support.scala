@@ -108,7 +108,8 @@ trait RouteSupport extends Http4sDsl[IO]:
   protected def optional(req: Request[IO])(f: Option[User] => IO[Response[IO]]): IO[Response[IO]] =
     sessions.fromRequest(req).flatMap {
       case None if sessions.bearer(req).isDefined => principal(req)(p => f(Some(p.user)))
-      case p                                      => f(p.map(_.user))
+      case Some(p)                                => as(p.user)(f(Some(p.user)))
+      case None                                   => f(None)
     }
 
   /** 画面からの更新の要求か（CSRF の確認. ログインしていない人の要求にも使う）. */
@@ -119,11 +120,14 @@ trait RouteSupport extends Http4sDsl[IO]:
     if !bearer && !readOnly(req) && req.headers.get(csrfHeader).isEmpty then err(Status.Forbidden, "画面以外からの更新の要求は受け付けません")
     else
       sessions.fromRequest(req).flatMap {
-        case Some(p) => f(p)
+        case Some(p) => as(p.user)(f(p))
         case None if bearer =>
           err(Status.Unauthorized, "API トークンが正しくないか、期限が切れています").map(_.putHeaders(`WWW-Authenticate`(Challenge("Bearer", "skaka"))))
         case None => err(Status.Unauthorized, "ログインしてください")
       }
+
+  /** 操作したユーザーを、トレース（スパンの属性）とこの中のログに載せる. */
+  private def as[A](u: User)(fa: IO[A]): IO[A] = skaka.observe.Telemetry.withUser(u.id.toString, u.name)(fa)
 
   protected def body[A: Decoder](req: Request[IO])(f: A => IO[Response[IO]]): IO[Response[IO]] =
     req.as[A].attempt.flatMap {
@@ -160,11 +164,16 @@ object Guard:
     case "api" :: "recordings" :: _ :: "chunks" :: _ :: Nil => Recorder.MaxChunk.toLong
     case _                                                => MaxBody
 
-  /** 画面（index.html）の CSP. MediaPipe の WASM（wasm-unsafe-eval）、Worker の時計（blob:）、背景の画像（data:）、IdP のアバター（https:）を許す. */
-  val PageCsp: String = List(
-    "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "worker-src 'self' blob:", "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:", "media-src 'self' blob:", "connect-src 'self'", "font-src 'self'", "object-src 'none'",
-    "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'").mkString("; ")
+  /**
+   * 画面（index.html）の CSP. MediaPipe の WASM（wasm-unsafe-eval）、Worker の時計（blob:）、背景の画像（data:）、IdP のアバター（https:）を許す.
+   * skorimako のブラウザの観測（SKORIMAKO_RUM_*）を設定したときは、その rum.js の読み込みと送信も許す.
+   */
+  val PageCsp: String =
+    val rum = skaka.observe.RumRoutes.origin.fold("")(" " + _)
+    List(
+      "default-src 'self'", s"script-src 'self' 'wasm-unsafe-eval'$rum", "worker-src 'self' blob:", "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:", "media-src 'self' blob:", s"connect-src 'self'$rum", "font-src 'self'", "object-src 'none'",
+      "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'").mkString("; ")
 
   def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = cats.data.Kleisli { (req: Request[IO]) =>
     val limit = limitOf(req)

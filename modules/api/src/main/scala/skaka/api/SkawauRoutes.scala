@@ -77,7 +77,7 @@ final class SkawauRoutes(d: ApiRoutes.Deps) extends RouteSupport:
                 case Right((token, scopes)) if scopes.contains("write") => links.saveToken(u.id, box.seal(token)) *> done(back, "connected")
                 // 書き込みを許されていない（skawau の OAUTH_CLIENTS の scopes に write がない）
                 case Right((token, _)) => c.revoke(token) *> done(back, "readonly")
-                case Left(e)           => IO.println(s"[skaka] skawau token exchange failed: $e") *> done(back, "error")
+                case Left(e)           => skaka.observe.Log.println(s"[skaka] skawau token exchange failed: $e") *> done(back, "error")
               }
             }
         }

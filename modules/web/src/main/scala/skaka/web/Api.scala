@@ -17,18 +17,23 @@ final case class ApiError(status: Int, message: String) extends Exception(messag
 /** バックエンドの REST API. 401 はログインへ（loginOn401 = false なら呼んだ側で扱う）、エラーは {"error": ...} の文言にする. */
 object Api {
 
-  private def request(method: dom.HttpMethod, url: String, body: Option[Json] = None, loginOn401: Boolean = true): Future[Option[Json]] = {
-    val init = new dom.RequestInit {}
-    init.method = method
-    init.credentials = dom.RequestCredentials.`same-origin`
+  /** fetch の設定（同じオリジンの Cookie を付ける. body は JSON の文字列）. */
+  def init(method: dom.HttpMethod, body: Option[String] = None): dom.RequestInit = {
+    val i = new dom.RequestInit {}
+    i.method = method
+    i.credentials = dom.RequestCredentials.`same-origin`
     // 更新の要求には X-Skaka を付ける（サーバーはこれのない更新を CSRF として断る）
     val hs = js.Dictionary[String]("X-Skaka" -> "1")
     body.foreach { b =>
       hs("Content-Type") = "application/json"
-      init.body = b.noSpaces
+      i.body = b
     }
-    init.headers = hs
-    dom.fetch(url, init).toFuture.flatMap { res =>
+    i.headers = hs
+    i
+  }
+
+  private def request(method: dom.HttpMethod, url: String, body: Option[Json] = None, loginOn401: Boolean = true): Future[Option[Json]] = {
+    dom.fetch(url, init(method, body.map(_.noSpaces))).toFuture.flatMap { res =>
       if (res.status == 401 && loginOn401) {
         if (!dom.window.location.pathname.startsWith("/login")) login()
         Future.failed(ApiError(401, "ログインしてください"))
@@ -119,12 +124,10 @@ object Api {
 
   /** 録画の断片を送る（本文はそのまま）. 失敗は ApiError（status 0 は通信の失敗）. */
   def putChunk(id: UUID, seq: Int, data: dom.Blob): Future[Unit] = {
-    val init = new dom.RequestInit {}
-    init.method = dom.HttpMethod.PUT
-    init.credentials = dom.RequestCredentials.`same-origin`
-    init.headers = js.Dictionary[String]("X-Skaka" -> "1", "Content-Type" -> "application/octet-stream")
-    init.body = data
-    dom.fetch(s"/api/recordings/$id/chunks/$seq", init).toFuture.recover { case e => throw ApiError(0, e.getMessage) }.flatMap { res =>
+    val i = init(dom.HttpMethod.PUT)
+    i.headers = js.Dictionary[String]("X-Skaka" -> "1", "Content-Type" -> "application/octet-stream")
+    i.body = data
+    dom.fetch(s"/api/recordings/$id/chunks/$seq", i).toFuture.recover { case e => throw ApiError(0, e.getMessage) }.flatMap { res =>
       if (res.ok) Future.successful(())
       else res.text().toFuture.recover(_ => "").flatMap { t =>
         Future.failed(ApiError(res.status, parse(t).toOption.flatMap(_.hcursor.get[String]("error").toOption).getOrElse(s"${res.status}")))

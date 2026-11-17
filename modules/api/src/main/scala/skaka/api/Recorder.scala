@@ -67,7 +67,7 @@ final class SkawauClient(val cfg: SkawauConfig, http: Client[IO], upload: Client
  * skawau のアップロードは1回で全体を送るため、録画中は一時ファイルにためる（途中で切れても、それまでの分は残る）.
  */
 final class Recorder private (store: RecordingStore, links: SkawauStore, val client: SkawauClient, box: SecretBox, hub: Hub, sup: Supervisor[IO],
-                              active: Ref[IO, Map[UUID, Recorder.Active]]):
+                              active: Ref[IO, Map[UUID, Recorder.Active]], notices: Notices):
   import Recorder.*
 
   private def file(id: UUID): Path = Path(client.cfg.dir) / s"$id.part"
@@ -101,6 +101,7 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
       mx  <- Mutex[IO]
       _   <- active.update(_.updated(rec.id, Active(rec, 0, 0, now, mx)))
       _   <- hub.recording(room.id, Some(RecordingNotice(rec.id, u.name, now.toString)), rec.id)
+      _   <- skaka.observe.Metrics.count("skaka.recordings.started", "mime" -> rec.mime)
     yield Right(rec)
 
   /** 断片を足す（seq は 0 から順に. 送り直しで同じものが来たら受け流す）. 返すのはここまでの大きさ. */
@@ -193,8 +194,10 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
       case Right(j)       => IO.pure(Right(j))
     })
 
-  /** skawau に置き、参加者と共有する. 失敗したら一時ファイルを残す（もう一度保存できる）. */
-  private def save(id: UUID): IO[Unit] =
+  /** skawau に置き、参加者と共有する. 失敗したら一時ファイルを残す（もう一度保存できる）. 終わったら録画した人にプッシュ通知. */
+  private def save(id: UUID): IO[Unit] = skaka.observe.Telemetry.span("recording.save", "recording.id" -> id.toString)(saveImpl(id))
+
+  private def saveImpl(id: UUID): IO[Unit] =
     store.find(id).flatMap {
       case None => Files[IO].deleteIfExists(file(id)).void
       case Some(r) =>
@@ -217,10 +220,11 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
             _      <- EitherT.liftF(store.saved(id, fileId, s"${client.cfg.url}/view/$fileId", shared))
             _      <- EitherT.liftF(Files[IO].deleteIfExists(path))
           yield ()
-        go.value.flatMap {
-          case Right(_) => IO.unit
-          case Left(m)  => store.failed(id, m)
-        }.handleErrorWith(e => store.failed(id, s"保存できませんでした: ${e.getMessage}"))
+        val result = go.value.flatMap {
+          case Right(_) => IO.pure(true)
+          case Left(m)  => store.failed(id, m).as(false)
+        }.handleErrorWith(e => store.failed(id, s"保存できませんでした: ${e.getMessage}").as(false))
+        result.flatMap(ok => skaka.observe.Metrics.count("skaka.recordings.saved", "result" -> (if ok then "ok" else "failed")) *> notices.recording(r, ok))
     }
 
   /** 会議に参加したメンバーと共有する（閲覧のみ. skawau でメールアドレスが一致する人だけ）. 共有できた人数. */
@@ -265,12 +269,13 @@ object Recorder:
 
   def ext(mime: String): String = if mime.contains("mp4") then ".mp4" else if mime.contains("ogg") then ".ogg" else ".webm"
 
-  def resource(store: RecordingStore, links: SkawauStore, client: SkawauClient, box: SecretBox, hub: Hub): Resource[IO, Recorder] =
+  def resource(store: RecordingStore, links: SkawauStore, client: SkawauClient, box: SecretBox, hub: Hub,
+               notices: Notices = Notices.none): Resource[IO, Recorder] =
     for
       sup    <- Supervisor[IO](await = false)
       active <- Resource.eval(Ref.of[IO, Map[UUID, Active]](Map.empty))
-      rec     = new Recorder(store, links, client, box, hub, sup, active)
+      rec     = new Recorder(store, links, client, box, hub, sup, active, notices)
       n      <- Resource.eval(rec.recover)
-      _      <- Resource.eval(IO.whenA(n > 0)(IO.println(s"[skaka] saving $n recording(s) left by the previous run")))
-      _      <- (IO.sleep(15.seconds) *> rec.sweep(Silent).handleErrorWith(e => IO.println(s"[skaka] recording sweep failed: $e"))).foreverM.background
+      _      <- Resource.eval(IO.whenA(n > 0)(skaka.observe.Log.println(s"[skaka] saving $n recording(s) left by the previous run")))
+      _      <- (IO.sleep(15.seconds) *> rec.sweep(Silent).handleErrorWith(e => skaka.observe.Log.println(s"[skaka] recording sweep failed: $e"))).foreverM.background
     yield rec

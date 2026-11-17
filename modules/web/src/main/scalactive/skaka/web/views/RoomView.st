@@ -39,7 +39,7 @@ def unmounted(s: State): Unit = {
 def load(s: State): Unit = Api.entry(code).onComplete {
   case Success(e) =>
     s.entry := Some(e)
-    e.me.foreach(m => Store.me := Some(m))
+    e.me.foreach { m => Store.me := Some(m); Observe.setUser(m.id.toString) }
     pageTitle(e.name)
     Meeting.roomName := e.name
     Meeting.prepare()

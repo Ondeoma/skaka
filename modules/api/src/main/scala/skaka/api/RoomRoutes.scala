@@ -146,7 +146,9 @@ object SignalRoutes:
           case None => Forbidden(ErrorDto("入るための切符が使えません（期限切れ）。入り直してください"))
           case Some((peer, q)) =>
             Flood.create.flatMap { flood =>
-              val send = Stream.fromQueueNoneTerminated(q).map(m => WebSocketFrame.Text(m.asJson.noSpaces)) ++ Stream.emit(WebSocketFrame.Close())
+              // 接続中の数（メトリクス）は、送る側のストリームが続いている間
+              val conn = Stream.bracket(skaka.observe.Metrics.upDown("skaka.ws.connections", 1))(_ => skaka.observe.Metrics.upDown("skaka.ws.connections", -1))
+              val send = conn >> (Stream.fromQueueNoneTerminated(q).map(m => WebSocketFrame.Text(m.asJson.noSpaces)) ++ Stream.emit(WebSocketFrame.Close()))
               val receive: fs2.Pipe[IO, WebSocketFrame, Unit] = _.collect { case WebSocketFrame.Text(t, _) if t.length <= MaxFrame => t }
                 .evalMap(t => decode[ClientMsg](t).fold(_ => IO.unit, m => flood.allow(m).ifM(hub.receive(peer, m), IO.unit)))
                 .onFinalize(hub.disconnect(peer))

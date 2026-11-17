@@ -18,7 +18,7 @@ def removeLabel(r: RoomDto): String = if (r.isOwner) "削除" else "一覧から
 
 <template>
   <div class="room">
-    <div class="icon" @click="props.onOpen(props.room)">{{ if (props.room.personal) "🏠" else "📹" }}</div>
+    <div class="icon" @click="props.onOpen(props.room)"><template v-if="props.room.personal">🏠</template><span v-else class="ico ico-video"></span></div>
     <div class="grow body" @click="props.onOpen(props.room)">
       <div class="name">{{ props.room.name }}
         <span v-if="props.room.live > 0" class="live">● {{ props.room.live }}人が会議中</span>

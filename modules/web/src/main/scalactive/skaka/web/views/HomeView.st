@@ -76,7 +76,7 @@ def evClass(e: UpcomingDto): String = if (soon(e)) "ev soon" else "ev"
   <div class="page">
     <section class="hero">
       <div class="actions">
-        <button class="primary big" @click="startNow()" :disabled="personal.v.isEmpty">📹 すぐに会議を始める</button>
+        <button class="primary big" @click="startNow()" :disabled="personal.v.isEmpty"><span class="ico ico-video"></span> すぐに会議を始める</button>
         <button class="big" @click="Store.roomEditor := Some(None)">＋ 会議室を作る</button>
         <button v-if="canSchedule(s)" class="big" @click="Store.scheduler := Some(ScheduleDraft())">📅 会議の予定を立てる</button>
       </div>

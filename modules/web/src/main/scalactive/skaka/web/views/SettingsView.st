@@ -3,7 +3,7 @@ import skaka.web.*
 import skaka.shared.*
 import skaka.web.parts.*
 
-// 設定: 名前・タイムゾーン（サーバー）、画面の色・音（この端末）、skuaka・skawau との連携、API トークンと MCP
+// 設定: 名前・タイムゾーン（サーバー）、画面の色・音・プッシュ通知（この端末）、skuaka・skawau との連携、API トークンと MCP
 case class State(name: RV[String] = RV(Store.me.v.map(_.name).getOrElse("")),
                  tz: RV[String] = RV(Store.me.v.map(_.timezone).getOrElse(Time.timezone())),
                  theme: RV[String] = RV(Theme.current.v))
@@ -41,6 +41,11 @@ def zones: List[String] = Time.timezones()
       <label class="field"><span>画面の色</span>
         <select v-model="s.theme"><option v-for="t in Theme.options" :value="t._1">{{ t._2 }}</option></select></label>
       <label class="row"><input type="checkbox" :checked="Sound.enabled" @change="Sound.set(Dom.checked(event))"> 会議中に入退室・チャットの音を鳴らす</label>
+    </section>
+    <section class="panel">
+      <h2>通知（この端末）</h2>
+      <p><PushToggle /></p>
+      <p class="muted small">待機室で待っている人がいるとき（自分の会議室に入っていないとき）、skuaka の予定に招待された会議が始まったとき、録画を保存したときに知らせます。</p>
     </section>
     <SkuakaSettings v-if="Store.skuakaEnabled" />
     <SkawauSettings v-if="Store.skawauEnabled" />

@@ -22,7 +22,8 @@ final class Hub private (
     cell: AtomicCell[IO, Hub.State],
     tickets: Ref[IO, Map[String, Ticket]],
     dbq: Queue[IO, Effect],
-    meetings: MeetingStore
+    meetings: MeetingStore,
+    notices: Notices
 ):
   import Hub.State
 
@@ -48,12 +49,24 @@ final class Hub private (
           id   = skaka.auth.Crypto.randomToken(9)
           peer = PeerInfo(id, t.user.map(_.id), t.user.fold(t.guestName.getOrElse("ゲスト"))(_.name), t.user.flatMap(_.avatarUrl),
                    host = false, guest = t.user.isEmpty, MediaState(audio = false, video = false), now.toString)
-          _ <- run { s =>
+          ba <- runWith { s =>
                  val live = s.lives.getOrElse(t.room.id, Live(t.room.id, t.room.ownerId, t.room.lobby))
                  val s1   = s.copy(conns = s.conns.updated(id, q), roomOf = s.roomOf.updated(id, t.room.id), seen = s.seen.updated(id, now))
                  apply(s1, t.room.id, Conference.arrive(live, peer, now, () => UUID.randomUUID()))
                }
+          (before, after) = ba
+          _ <- arrived(t.room, id, before.lives.get(t.room.id), after.lives.get(t.room.id))
         yield Some(id -> q)
+    }
+
+  /** 入ってきた後: 待機室に入った（持ち主がいなければプッシュ通知）・会議が始まった（招待された人にプッシュ通知）. */
+  private def arrived(room: Room, peer: String, before: Option[Live], after: Option[Live]): IO[Unit] =
+    after.traverse_ { l =>
+      val knock   = l.waiting.find(p => p.id == peer && !p.userId.contains(room.ownerId))
+      val started = l.meetingId.isDefined && before.flatMap(_.meetingId) != l.meetingId
+      knock.traverse_(p => skaka.observe.Metrics.count("skaka.lobby.knocks", "guest" -> p.guest.toString) *>
+        IO.whenA(!l.peers.exists(_.userId.contains(room.ownerId)))(notices.knock(room, p.name))) *>
+        IO.whenA(started)(notices.started(room, l.peers.flatMap(_.userId).toSet).start.void)
     }
 
   def receive(peer: String, msg: ClientMsg): IO[Unit] =
@@ -105,6 +118,12 @@ final class Hub private (
   /** 会議室ごとの入っている人数. */
   def counts: IO[Map[UUID, Int]] = cell.get.map(_.lives.view.mapValues(_.peers.size).filter(_._2 > 0).toMap)
 
+  /** いまの数（メトリクス）: 会議中の会議室・会議に入っている人・待機室の人. */
+  def stats: IO[(Long, Long, Long)] = cell.get.map { s =>
+    val ls = s.lives.values
+    (ls.count(_.peers.nonEmpty).toLong, ls.map(_.peers.size.toLong).sum, ls.map(_.waiting.size.toLong).sum)
+  }
+
   // ---------------------------------------------------------------- 内部
 
   private def apply(s: State, room: UUID, r: (Live, List[Effect])): (State, List[Effect]) =
@@ -112,14 +131,17 @@ final class Hub private (
     (s.copy(lives = if l.isEmpty then s.lives - room else s.lives.updated(room, l)), fx)
 
   /** 状態を変え、同じ順番のまま送る. DB への書き込みは裏のキューへ. */
-  private def run(f: State => (State, List[Effect])): IO[Unit] =
-    cell.evalUpdate { s =>
+  private def run(f: State => (State, List[Effect])): IO[Unit] = runWith(f).void
+
+  /** run と同じ. 変える前と後の状態を返す. */
+  private def runWith(f: State => (State, List[Effect])): IO[(State, State)] =
+    cell.evalModify { s =>
       val (s2, fx) = f(s)
       fx.traverse_ {
         case Effect.Send(to, m)    => (s2.conns.get(to) orElse s.conns.get(to)).traverse_(_.offer(Some(m)))
         case Effect.Disconnect(to) => (s2.conns.get(to) orElse s.conns.get(to)).traverse_(_.offer(None))
         case db                    => dbq.offer(db)
-      }.as(s2)
+      }.as(s2 -> (s, s2))
     }
 
 object Hub:
@@ -128,26 +150,28 @@ object Hub:
                          roomOf: Map[String, UUID] = Map.empty, seen: Map[String, Instant] = Map.empty)
 
   /** Hub と、DB に履歴を書く裏の処理. */
-  def resource(rooms: RoomStore, meetings: MeetingStore): Resource[IO, Hub] =
+  def resource(rooms: RoomStore, meetings: MeetingStore, notices: Notices = Notices.none): Resource[IO, Hub] =
     for
       cell    <- Resource.eval(AtomicCell[IO].of(State()))
       tickets <- Resource.eval(Ref.of[IO, Map[String, Ticket]](Map.empty))
       q       <- Resource.eval(Queue.unbounded[IO, Effect])
       _       <- writer(q, rooms, meetings).foreverM.background
-      hub      = new Hub(cell, tickets, q, meetings)
+      hub      = new Hub(cell, tickets, q, meetings, notices)
       _       <- (IO.sleep(30.seconds) *> hub.reap(Silent)).foreverM.background
     yield hub
 
+  /** DB に履歴を書く（会議の開始・終了・入室・退出・チャットの数もここで数える）. */
   private def writer(q: Queue[IO, Effect], rooms: RoomStore, meetings: MeetingStore): IO[Unit] =
+    import skaka.observe.Metrics.count
     q.take.flatMap {
-      case Effect.StartMeeting(id, room, at) => meetings.start(id, room, at)
-      case Effect.EndMeeting(id, at)         => meetings.end(id, at)
+      case Effect.StartMeeting(id, room, at) => count("skaka.meetings.started") *> meetings.start(id, room, at)
+      case Effect.EndMeeting(id, at)         => count("skaka.meetings.ended") *> meetings.end(id, at)
       case Effect.Joined(row, m, p, at) =>
-        meetings.joined(row, m, p.userId, p.name, p.guest, at)
-      case Effect.LeftMeeting(row, at)       => meetings.left(row, at)
-      case Effect.SaveChat(m, msg, at)       => meetings.chat(m, msg, at)
+        count("skaka.participants.joined", "guest" -> p.guest.toString) *> meetings.joined(row, m, p.userId, p.name, p.guest, at)
+      case Effect.LeftMeeting(row, at)       => count("skaka.participants.left") *> meetings.left(row, at)
+      case Effect.SaveChat(m, msg, at)       => count("skaka.chat.messages") *> meetings.chat(m, msg, at)
       case _                                 => IO.unit
-    }.handleErrorWith(e => IO.println(s"[skaka] failed to write meeting history: $e"))
+    }.handleErrorWith(e => skaka.observe.Log.println(s"[skaka] failed to write meeting history: $e"))
 
   val TicketTtl: FiniteDuration = 2.minutes
 

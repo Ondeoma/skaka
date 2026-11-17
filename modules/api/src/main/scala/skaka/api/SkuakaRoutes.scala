@@ -188,6 +188,9 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
   private def linkDto(u: User): IO[SkuakaLinkDto] =
     links.get(u.id).map(l => SkuakaLinkDto(d.skuaka.isDefined, d.skuaka.map(_.base), l.isDefined, l.map(_.account), l.map(_.prefix), l.exists(_.canWrite)))
 
+  /** skuaka の予定に会議室を付けた・会議の予定を立てた数（メトリクス）. */
+  private def count(action: String): IO[Unit] = skaka.observe.Metrics.count("skaka.skuaka.events", "action" -> action)
+
   private def date(s: Option[String]): Option[LocalDate] = s.flatMap(x => Try(LocalDate.parse(x)).toOption)
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
@@ -219,8 +222,8 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
       }
 
     case req @ POST -> Root / "api" / "skuaka" / "events" / UuidVar(id) / "room" =>
-      authed(req)(u => run(attach(u, id).semiflatMap(Ok(_))))
+      authed(req)(u => skaka.observe.Telemetry.span("skuaka.attach")(run(attach(u, id).semiflatTap(_ => count("attached")).semiflatMap(Ok(_)))))
 
     case req @ POST -> Root / "api" / "skuaka" / "schedule" =>
-      authed(req)(u => body[ScheduleReq](req)(r => run(schedule(u, r).semiflatMap(Created(_)))))
+      authed(req)(u => body[ScheduleReq](req)(r => skaka.observe.Telemetry.span("skuaka.schedule")(run(schedule(u, r).semiflatTap(_ => count("scheduled")).semiflatMap(Created(_))))))
   }

@@ -23,7 +23,7 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa):
   def upsert(sub: String, name: String, email: Option[String], avatar: Option[String]): IO[User] = tx(
     (fr"""insert into app_user (id, sub, name, email, avatar_url, last_login_at) values (${UUID.randomUUID()}, $sub, $name, $email, $avatar, now())
           on conflict (sub) do update set name = excluded.name, email = excluded.email,
-            avatar_url = coalesce(excluded.avatar_url, app_user.avatar_url), last_login_at = now()
+            avatar_url = excluded.avatar_url, last_login_at = now()
           returning""" ++ cols).query[User].unique
   )
 
@@ -41,6 +41,12 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa):
     (fr"select" ++ cols ++ fr"from app_user where not disabled and (name ilike $like or email ilike $like) order by name limit $limit")
       .query[User].to[List].map(_.map(_.brief))
   }
+
+  /** メールアドレスが一致する有効なユーザー（大文字小文字は区別しない. skuaka の予定に招待された人を探す）. */
+  def idsByEmail(emails: List[String]): IO[List[UUID]] =
+    val ms = emails.map(_.trim.toLowerCase).filter(_.nonEmpty).distinct
+    if ms.isEmpty then IO.pure(Nil)
+    else tx(sql"select id from app_user where not disabled and lower(email) = any(${ms.toArray})".query[UUID].to[List])
 
   def updateMe(id: UUID, name: Option[String], timezone: Option[String]): IO[Unit] = tx {
     val sets = List(name.map(_.trim).filter(_.nonEmpty).map(v => fr"name = $v"), timezone.map(v => fr"timezone = $v")).flatten

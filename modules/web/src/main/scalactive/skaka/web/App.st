@@ -21,6 +21,7 @@ val routes: PathPatternRoutes = List(
 )
 
 def mounted(s: State): Unit = {
+  Fallback.install(routes)
   val path = dom.window.location.pathname
   Api.clientConfig().foreach { c =>
     Store.config := Some(c)
@@ -28,6 +29,7 @@ def mounted(s: State): Unit = {
     if (path.startsWith("/login") || path.startsWith("/r/")) s.ready := true
     else Store.report(Api.me()) { me =>
       Store.me := Some(me)
+      Observe.setUser(me.id.toString)
       Store.loadRooms()
       s.ready := true
     }
@@ -59,6 +61,7 @@ def schedulers = Store.scheduler.mapC(_.toList)
     <div class="spacer"></div>
     <div v-if="loggedIn" class="me">
       <button class="ghost me-btn" @click="s.menu := !s.menu.v"><Avatar :user="meBrief.v" :size="30" /></button>
+      <div v-if="s.menu" class="menu-bg" @click="s.menu := false"></div>
       <div v-if="s.menu" class="menu" @click="s.menu := false">
         <div class="who"><b>{{ userName }}</b><span class="muted small">{{ userEmail }}</span></div>
         <RouterLink to="/settings">設定</RouterLink>
@@ -91,9 +94,8 @@ def schedulers = Store.scheduler.mapC(_.toList)
 .me { position: relative; }
 .me-btn { padding: .15rem; border-radius: 999px; }
 .menu { position: absolute; right: 0; top: 2.8rem; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
-  min-width: 220px; padding: .3rem; display: flex; flex-direction: column; }
-.menu a { padding: .5rem .7rem; border-radius: 6px; color: var(--fg); }
-.menu a:hover { background: var(--hover); text-decoration: none; }
+  min-width: 220px; padding: .3rem; display: flex; flex-direction: column; z-index: 200; }
+.menu-bg { position: fixed; inset: 0; z-index: 199; }
 .who { display: flex; flex-direction: column; padding: .5rem .7rem; border-bottom: 1px solid var(--line); margin-bottom: .3rem; }
 .main { min-height: calc(100vh - var(--header)); }
 .main.full { height: 100vh; height: 100dvh; min-height: 0; }
