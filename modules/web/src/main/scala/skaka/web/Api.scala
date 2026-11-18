@@ -122,16 +122,24 @@ object Api {
   def retryRecording(id: UUID): Future[RecordingDto] = post[RecordingDto](s"/api/recordings/$id/retry")
   def deleteRecording(id: UUID): Future[Unit] = delete(s"/api/recordings/$id")
 
-  /** 録画の断片を送る（本文はそのまま）. 失敗は ApiError（status 0 は通信の失敗）. */
-  def putChunk(id: UUID, seq: Int, data: dom.Blob): Future[Unit] = {
+  /** 本文をそのまま（JSON にせず）送り、応答の JSON を返す. 失敗は ApiError（status 0 は通信の失敗）. */
+  private def putBlob(url: String, data: dom.Blob, contentType: String): Future[Option[Json]] = {
     val i = init(dom.HttpMethod.PUT)
-    i.headers = js.Dictionary[String]("X-Skaka" -> "1", "Content-Type" -> "application/octet-stream")
+    i.headers = js.Dictionary[String]("X-Skaka" -> "1", "Content-Type" -> contentType)
     i.body = data
-    dom.fetch(s"/api/recordings/$id/chunks/$seq", i).toFuture.recover { case e => throw ApiError(0, e.getMessage) }.flatMap { res =>
-      if (res.ok) Future.successful(())
+    dom.fetch(url, i).toFuture.recover { case e => throw ApiError(0, e.getMessage) }.flatMap { res =>
+      if (res.ok) res.text().toFuture.map(t => if (t.isEmpty) None else parse(t).toOption)
       else res.text().toFuture.recover(_ => "").flatMap { t =>
         Future.failed(ApiError(res.status, parse(t).toOption.flatMap(_.hcursor.get[String]("error").toOption).getOrElse(s"${res.status}")))
       }
     }
   }
+
+  /** 録画の断片を送る（本文はそのまま）. */
+  def putChunk(id: UUID, seq: Int, data: dom.Blob): Future[Unit] =
+    putBlob(s"/api/recordings/$id/chunks/$seq", data, "application/octet-stream").map(_ => ())
+
+  /** アイコンを保存する（画像そのものを送る）・消す. */
+  def uploadAvatar(image: dom.Blob): Future[MeDto] = putBlob("/api/me/avatar", image, image.`type`).map(as[MeDto])
+  def deleteAvatar(): Future[MeDto] = request(dom.HttpMethod.DELETE, "/api/me/avatar").map(as[MeDto])
 }

@@ -23,6 +23,9 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
     IO.pure(cookie.fold(r)(r.addCookie))
 
   /** ログインした人の会議室を用意してから、セッションを発行する. */
+  /** 最新の自分の情報（アイコン・名前を変えた直後に画面へ返す）. */
+  private def me(u: User): IO[Response[IO]] = users.find(u.id).flatMap(x => Ok(x.getOrElse(u).me))
+
   private def loggedIn(u: User, idToken: Option[String]): IO[ResponseCookie] =
     rooms.ensurePersonal(u) *> sessions.issue(u, idToken)
       .flatTap(_ => skaka.observe.Metrics.count("skaka.logins", "via" -> (if idToken.isDefined then "oidc" else "dev")))
@@ -103,13 +106,41 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
 
     case req @ GET -> Root / "api" / "me" => authed(req)(u => Ok(u.me))
 
+
     case req @ PATCH -> Root / "api" / "me" =>
       authed(req)(u => body[UpdateMeReq](req) { r =>
         val tz = r.timezone.map(_.trim).filter(_.nonEmpty)
         if tz.exists(z => scala.util.Try(java.time.ZoneId.of(z)).isFailure) then err(Status.BadRequest, "タイムゾーンが正しくありません")
         else if r.name.exists(_.trim.length > 100) then err(Status.BadRequest, "名前は100文字以内にしてください")
-        else users.updateMe(u.id, r.name, tz) *> users.find(u.id).flatMap(x => Ok(x.getOrElse(u).me))
+        else users.updateMe(u.id, r.name, tz) *> me(u)
       })
+
+    // アイコン: 画像そのもの（PNG・JPEG・GIF・WebP、1MB まで）を本文にして送る. 消すと IdP の画像に戻る
+    case req @ PUT -> Root / "api" / "me" / "avatar" =>
+      authed(req) { u =>
+        req.body.take(AvatarImage.MaxBytes + 1L).compile.to(Array).flatMap { data =>
+          if data.length > AvatarImage.MaxBytes then err(Status.PayloadTooLarge, "画像は1MBまでにしてください")
+          else AvatarImage.detect(data).fold(err(Status.UnsupportedMediaType, "PNG・JPEG・GIF・WebP の画像を選んでください")) { ct =>
+            users.saveAvatar(u.id, ct, data) *> me(u)
+          }
+        }
+      }
+
+    case req @ DELETE -> Root / "api" / "me" / "avatar" =>
+      authed(req)(u => users.deleteAvatar(u.id) *> me(u))
+
+    // URL の v（版）が変われば別の画像なので、長くキャッシュしてよい
+    case req @ GET -> Root / "api" / "users" / UuidVar(id) / "avatar" =>
+      authed(req) { _ =>
+        users.avatar(id).flatMap {
+          case None => err(Status.NotFound, "アイコンがありません")
+          case Some((ct, data)) =>
+            // JSON の変換が優先されないよう、バイト列のまま返す
+            IO.pure(Response[IO](Status.Ok).withBodyStream(fs2.Stream.emits(data)).putHeaders(
+              headers.`Content-Type`(MediaType.unsafeParse(ct)), "Cache-Control" -> "private, max-age=31536000, immutable",
+              "X-Content-Type-Options" -> "nosniff", "Content-Security-Policy" -> "default-src 'none'"))
+        }
+      }
 
     case req @ GET -> Root / "api" / "users" =>
       authed(req)(_ => users.search(param(req, "q").getOrElse(""), 20).flatMap(Ok(_)))

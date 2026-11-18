@@ -164,6 +164,10 @@ object Guard:
     case "api" :: "recordings" :: _ :: "chunks" :: _ :: Nil => Recorder.MaxChunk.toLong
     case _                                                => MaxBody
 
+  // IdP が http（開発環境など）のときは、そのアイコンの画像も許す（https の画像はもとから許している）
+  private val idpImg: String = sys.env.get("OIDC_ISSUER").flatMap(u => scala.util.Try(java.net.URI.create(u)).toOption)
+    .filter(u => u.getScheme == "http" && u.getAuthority != null).fold("")(u => s" http://${u.getAuthority}")
+
   /**
    * 画面（index.html）の CSP. MediaPipe の WASM（wasm-unsafe-eval）、Worker の時計（blob:）、背景の画像（data:）、IdP のアバター（https:）を許す.
    * skorimako のブラウザの観測（SKORIMAKO_RUM_*）を設定したときは、その rum.js の読み込みと送信も許す.
@@ -172,7 +176,7 @@ object Guard:
     val rum = skaka.observe.RumRoutes.origin.fold("")(" " + _)
     List(
       "default-src 'self'", s"script-src 'self' 'wasm-unsafe-eval'$rum", "worker-src 'self' blob:", "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https:", "media-src 'self' blob:", s"connect-src 'self'$rum", "font-src 'self'", "object-src 'none'",
+      s"img-src 'self' data: blob: https:$idpImg", "media-src 'self' blob:", s"connect-src 'self'$rum", "font-src 'self'", "object-src 'none'",
       "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'").mkString("; ")
 
   def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = cats.data.Kleisli { (req: Request[IO]) =>
