@@ -2,7 +2,6 @@
 import skaka.web.*
 import skaka.shared.*
 import skaka.web.parts.*
-import org.scalajs.dom
 
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 
@@ -21,14 +20,14 @@ def mounted(s: State): Unit = {
   }
   // 会議中の人数は30秒ごと、予定は5分ごとに読み直す
   var n = 0
-  s.timer := dom.window.setInterval(() => {
+  s.timer := window.setInterval(() => {
     n += 1
     Store.loadRooms()
     if (n % 10 == 0 && s.link.v.exists(_.linked)) loadUpcoming(s)
   }, 30000)
 }
 
-def unmounted(s: State): Unit = dom.window.clearInterval(s.timer.v)
+def unmounted(s: State): Unit = window.clearInterval(s.timer.v)
 
 def loadUpcoming(s: State): Unit =
   Api.upcoming(Time.today(), Time.addDays(Time.today(), 7)).onComplete {
@@ -99,10 +98,10 @@ def evClass(e: UpcomingDto): String = if (soon(e)) "ev soon" else "ev"
       </div>
 
       <div v-if="Store.skuakaEnabled" class="col side">
-        <h2>今後の予定 <span class="muted small">skuaka</span></h2>
+        <h2>今後の予定 <span class="muted small">{{ AppNames.of("skuaka") }}</span></h2>
         <div v-if="notLinked(s)" class="panel small">
-          skuaka（カレンダー）と連携すると、今後の予定と会議室が並び、予定から会議に入れます。
-          <p><RouterLink to="/settings">設定</RouterLink>で skuaka の API トークンを登録してください。</p>
+          {{ AppNames.of("skuaka") }}（カレンダー）と連携すると、今後の予定と会議室が並び、予定から会議に入れます。
+          <p><RouterLink to="/settings">設定</RouterLink>で {{ AppNames.of("skuaka") }} の API トークンを登録してください。</p>
         </div>
         <template v-if="linked(s)">
           <p v-if="s.upError.mapC(_.nonEmpty)" class="error small">{{ s.upError }}</p>

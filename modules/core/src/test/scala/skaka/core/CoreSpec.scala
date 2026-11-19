@@ -6,37 +6,62 @@ import skaka.shared.*
 import java.time.Instant
 import java.util.UUID
 
-class CoreSpec extends munit.FunSuite:
+class CoreSpec extends munit.FunSuite {
 
   private val owner = UUID.randomUUID()
   private val other = UUID.randomUUID()
-  private val now   = Instant.parse("2026-11-15T01:00:00Z")
+  private val now = Instant.parse("2026-11-15T01:00:00Z")
   private def fresh = { var n = 0L; () => { n += 1; new UUID(0, n) } }
 
-  private def peer(id: String, user: Option[UUID], guest: Boolean = false) =
-    PeerInfo(id, user, id.toUpperCase, None, host = false, guest = guest, MediaState(audio = true, video = true), now.toString)
+  private def peer(
+    id: String,
+    user: Option[UUID],
+    guest: Boolean = false
+  ) =
+    PeerInfo(
+      id,
+      user,
+      id.toUpperCase,
+      None,
+      host = false,
+      guest = guest,
+      MediaState(audio = true, video = true),
+      now.toString
+    )
 
-  private def sent(fx: List[Effect], to: String): List[ServerMsg] = fx.collect { case Effect.Send(`to`, m) => m }
+  private def sent(
+    fx: List[Effect],
+    to: String
+  ): List[ServerMsg] = fx.collect { case Effect.Send(`to`, m) => m }
 
   /** 何人かを入れた状態. */
-  private def withPeers(lobby: Boolean = false)(ps: PeerInfo*): (Live, List[Effect]) =
+  private def withPeers(
+    lobby: Boolean = false
+  )(
+    ps: PeerInfo*
+  ): (Live, List[Effect]) = {
     val f = fresh
-    ps.foldLeft((Live(UUID.randomUUID(), owner, lobby), List.empty[Effect])) { case ((l, fx), p) =>
-      val (l2, fx2) = Conference.arrive(l, p, now, f)
-      (l2, fx ++ fx2)
+    ps.foldLeft((Live(UUID.randomUUID(), owner, lobby), List.empty[Effect])) {
+      case ((l, fx), p) => {
+        val (l2, fx2) = Conference.arrive(l, p, now, f)
+        (l2, fx ++ fx2)
+      }
     }
+  }
 
   test("戻り先は同じサイトのパスだけ（他のサイトへ飛ばさない）") {
     assertEquals(List("/r/abc", "/settings?x=1").map(SafePath.check), List(Some("/r/abc"), Some("/settings?x=1")))
-    for p <- List("//evil.example", "/\\evil.example", "/\tevil", "https://evil.example", "javascript:alert(1)", "", null) do
+    for p <-
+        List("//evil.example", "/\\evil.example", "/\tevil", "https://evil.example", "javascript:alert(1)", "", null)
+    do
       assertEquals(SafePath.check(p), None, p)
     assertEquals(SafePath.orElse(Some("//x"), "/settings"), "/settings")
   }
 
   test("文字起こし: 主催者だけが始める・全員に知らせる・文字起こし中だけ字幕を配って保存する・全員が出たら止まる") {
     val (l0, _) = withPeers()(peer("a", Some(owner)), peer("b", Some(other)))
-    val f       = fresh
-    val line    = TranscriptLine("t1", "b", "B", Some(other), "こんにちは", now.toString)
+    val f = fresh
+    val line = TranscriptLine("t1", "b", "B", Some(other), "こんにちは", now.toString)
     assertEquals(Conference.caption(l0, line, now)._2, Nil)
     val (l1, fx1) = Conference.handle(l0, "b", ClientMsg.Transcribe(true), now, f)
     assertEquals((l1.transcribing, sent(fx1, "b")), (None, List(ServerMsg.Error("主催者だけができる操作です"))))
@@ -50,7 +75,12 @@ class CoreSpec extends munit.FunSuite:
     assert(sent(fx4, "c").exists { case w: ServerMsg.Welcome => w.transcribing.isDefined; case _ => false })
     // 出ていった人の音声は配らない. 全員が出たら止まる
     assertEquals(Conference.caption(l3, line.copy(peer = "x"), now)._2, Nil)
-    val l4 = List("a", "b", "c").foldLeft(l3)((l, id) => Conference.leave(l, id, now)._1)
+    val l4 = List("a", "b", "c").foldLeft(l3)(
+      (
+        l,
+        id
+      ) => Conference.leave(l, id, now)._1
+    )
     assertEquals(l4.transcribing, None)
     assertEquals(Conference.handle(l2, "a", ClientMsg.Transcribe(false), now, f)._1.transcribing, None)
   }
@@ -61,9 +91,10 @@ class CoreSpec extends munit.FunSuite:
     assertEquals(fx.collect { case e: Effect.StartMeeting => e }.size, 1)
     assertEquals(fx.collect { case e: Effect.Joined => e.peer.id }, List("a", "b"))
     assert(sent(fx, "a").contains(ServerMsg.Joined(l.peers(1))))
-    sent(fx, "b").collectFirst { case w: ServerMsg.Welcome => w } match
+    sent(fx, "b").collectFirst { case w: ServerMsg.Welcome => w } match {
       case Some(w) => assertEquals(w.peers.map(_.id), List("a"))
-      case None    => fail("Welcome がない")
+      case None => fail("Welcome がない")
+    }
   }
 
   test("ゲストは待機室へ. 主催者がいなければメンバーが入れられる. 断ると切る") {
@@ -76,7 +107,7 @@ class CoreSpec extends munit.FunSuite:
     assertEquals(l2.peers.map(_.id), Vector("b", "g"))
     assert(sent(fx2, "g").exists(_.isInstanceOf[ServerMsg.Welcome]))
     // もう1人のゲストを断る
-    val (l3, _)   = Conference.arrive(l2, peer("h", None, guest = true), now, fresh)
+    val (l3, _) = Conference.arrive(l2, peer("h", None, guest = true), now, fresh)
     val (l4, fx4) = Conference.handle(l3, "b", ClientMsg.Deny("h"), now, fresh)
     assertEquals(l4.waiting, Vector.empty)
     assert(fx4.contains(Effect.Disconnect("h")))
@@ -141,7 +172,7 @@ class CoreSpec extends munit.FunSuite:
     assertEquals(l1.peers.map(_.id), Vector("a"))
     assert(fx1.contains(Effect.Disconnect("b")))
     assert(sent(fx1, "a").contains(ServerMsg.Left("b")))
-    val (l2, _)  = Conference.handle(l1, "a", ClientMsg.Chat("x"), now, fresh)
+    val (l2, _) = Conference.handle(l1, "a", ClientMsg.Chat("x"), now, fresh)
     val (l3, fx3) = Conference.leave(l2, "a", now)
     assert(l3.isEmpty && l3.chat.isEmpty && l3.meetingId.isEmpty)
     assertEquals(fx3.collect { case e: Effect.EndMeeting => e.id }, l.meetingId.toList)
@@ -151,13 +182,16 @@ class CoreSpec extends munit.FunSuite:
     assertEquals(RoomCode.parse("https://meet.example.com/r/abc-defg-hij?x=1"), Some("abc-defg-hij"))
     assertEquals(RoomCode.parse(" ABCDEFGHIJ "), Some("abc-defg-hij"))
     assertEquals(RoomCode.parse("abc-defg"), None)
-    assertEquals(RoomLinks.find("https://meet.example.com", "会議室A / https://meet.example.com/r/abc-defg-hij"), Some("abc-defg-hij"))
+    assertEquals(
+      RoomLinks.find("https://meet.example.com", "会議室A / https://meet.example.com/r/abc-defg-hij"),
+      Some("abc-defg-hij")
+    )
     assertEquals(RoomLinks.find("https://meet.example.com", "https://other.example.com/r/abc-defg-hij"), None)
   }
 
   test("録画中であることを全員に知らせ、後から入った人にも Welcome で伝える. 別の録画の終わりでは消さない") {
-    val (l, _)   = withPeers()(peer("a", Some(owner)), peer("b", Some(other)))
-    val rec      = RecordingNotice(UUID.randomUUID(), "A", now.toString)
+    val (l, _) = withPeers()(peer("a", Some(owner)), peer("b", Some(other)))
+    val rec = RecordingNotice(UUID.randomUUID(), "A", now.toString)
     val (l2, fx) = Conference.recording(l, Some(rec), rec.id)
     assertEquals(sent(fx, "b"), List(ServerMsg.Recording(Some(rec))))
     val (_, fx2) = Conference.arrive(l2, peer("c", Some(UUID.randomUUID())), now, fresh)
@@ -167,3 +201,4 @@ class CoreSpec extends munit.FunSuite:
     assertEquals(l3.recording, None)
     assertEquals(sent(fx3, "a"), List(ServerMsg.Recording(None)))
   }
+}

@@ -15,10 +15,10 @@ def save(props: Props, s: State): Unit =
   Store.submit(s.busy)(Api.linkToken(props.service, s.token.v.trim)) { l =>
     s.link := Some(l)
     s.token := ""
-    Store.toast(s"${props.service}（${l.account.getOrElse("")}）と連携しました")
+    Store.toast(s"${AppNames.nameOf(props.service)}（${l.account.getOrElse("")}）と連携しました")
   }
 
-def unlink(props: Props, s: State): Unit = Dialog.confirm(s"${props.service} との連携をやめますか？（登録した API トークンを消します）", "やめる") {
+def unlink(props: Props, s: State): Unit = Dialog.confirm(s"${AppNames.nameOf(props.service)} との連携をやめますか？（登録した API トークンを消します）", "やめる") {
   Store.report(Api.unlinkToken(props.service))(_ => Store.report(Api.tokenLink(props.service))(l => s.link := Some(l)))
 }
 
@@ -37,7 +37,7 @@ def settingsUrl(s: State) = s.link.mapC(_.flatMap(_.url).getOrElse("") + "/setti
       <button class="danger" @click="unlink(props, s)">連携をやめる</button>
     </template>
     <form v-else @submit.prevent="save(props, s)">
-      <p class="small muted">{{ props.service }} の <a :href="settingsUrl(s).v" target="_blank" rel="noopener">設定の画面</a> の「API トークンと MCP」で、
+      <p class="small muted">{{ AppNames.of(props.service) }} の <a :href="settingsUrl(s).v" target="_blank" rel="noopener">設定の画面</a> の「API トークンと MCP」で、
         「読み書き」の API トークンを作り、ここに貼り付けてください。トークンはサーバーで暗号化して保存します。</p>
       <div class="row">
         <input type="password" class="grow mono" v-model="s.token" :placeholder='props.service + "_…"' autocomplete="off">

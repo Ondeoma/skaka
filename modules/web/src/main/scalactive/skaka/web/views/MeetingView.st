@@ -32,7 +32,7 @@ def load(s: State): Unit = id.foreach(i => Api.meeting(i).onComplete {
 def recs(s: State) = s.detail.mapC(_.toList.flatMap(_.recordings))
 def retry(s: State, r: RecordingDto): Unit = Store.report(Api.retryRecording(r.id)) { _ => Store.toast("もう一度保存しています"); load(s) }
 def remove(s: State, r: RecordingDto): Unit =
-  Dialog.confirm(s"録画「${r.title}」を一覧から消しますか？" + (if (r.fileUrl.isDefined) "（skawau に保存したファイルは残ります. 消すときは skawau で消してください）" else ""), "消す") {
+  Dialog.confirm(s"録画「${r.title}」を一覧から消しますか？" + (if (r.fileUrl.isDefined) s"（${AppNames.nameOf("skawau")} に保存したファイルは残ります. 消すときは ${AppNames.nameOf("skawau")} で消してください）" else ""), "消す") {
     Store.report(Api.deleteRecording(r.id))(_ => load(s))
   }
 def size(r: RecordingDto): String = if (r.bytes >= 1048576) f"${r.bytes / 1048576.0}%.1f MB" else s"${r.bytes / 1024} KB"
@@ -68,15 +68,15 @@ def download(s: State): Unit = save(transcript(s), s"meeting-${day(s)}.md")
 // 議事録・要約（skakapo）
 def canAsk(s: State) = computed { Store.skakapoEnabled && (lines(s).v.nonEmpty || chat(s).v.nonEmpty) }
 def ask(s: State): Unit = id.foreach { i =>
-  Dialog.confirm("skakapo に議事録・要約を頼みますか？ 参加者・文字起こし・チャットを skakapo に渡し、あなたの skakapo の依頼として作ってもらいます" +
-    "（skakapo のクレジットを使います）。", "頼む", danger = false) {
-    Store.submit(s.asking)(Api.requestMinutes(i)) { _ => Store.toast("skakapo に議事録を頼みました。できたらここに出ます"); load(s) }
+  Dialog.confirm(s"${AppNames.nameOf("skakapo")} に議事録・要約を頼みますか？ 参加者・文字起こし・チャットを ${AppNames.nameOf("skakapo")} に渡し、あなたの ${AppNames.nameOf("skakapo")} の依頼として作ってもらいます" +
+    s"（${AppNames.nameOf("skakapo")} のクレジットを使います）。", "頼む", danger = false) {
+    Store.submit(s.asking)(Api.requestMinutes(i)) { _ => Store.toast(s"${AppNames.nameOf("skakapo")} に議事録を頼みました。できたらここに出ます"); load(s) }
   }
 }
-def refresh(s: State, x: MinutesDto): Unit = Store.report(Api.refreshMinutes(x.id)) { _ => Store.toast("skakapo の返事を取り込みました"); load(s) }
+def refresh(s: State, x: MinutesDto): Unit = Store.report(Api.refreshMinutes(x.id)) { _ => Store.toast(s"${AppNames.nameOf("skakapo")} の返事を取り込みました"); load(s) }
 def removeMinutes(s: State, x: MinutesDto): Unit =
-  Dialog.confirm("この議事録を消しますか？（skakapo の会話は残ります）", "消す")(Store.report(Api.deleteMinutes(x.id))(_ => load(s)))
-def fileMinutes(s: State, x: MinutesDto): Unit = Store.report(Api.fileMinutes(x.id)) { _ => Store.toast("skawau に保存しました"); load(s) }
+  Dialog.confirm(s"この議事録を消しますか？（${AppNames.nameOf("skakapo")} の会話は残ります）", "消す")(Store.report(Api.deleteMinutes(x.id))(_ => load(s)))
+def fileMinutes(s: State, x: MinutesDto): Unit = Store.report(Api.fileMinutes(x.id)) { _ => Store.toast(s"${AppNames.nameOf("skawau")} に保存しました"); load(s) }
 def minFileUrl(x: MinutesDto): String = x.fileUrl.getOrElse("")
 def minClass(x: MinutesDto): String = s"badge mn-${x.status}"
 def minutesFile(s: State): String = s"minutes-${day(s)}.md"
@@ -95,22 +95,22 @@ def minutesFile(s: State): String = s"minutes-${day(s)}.md"
       </div>
       <section v-if="Store.skakapoEnabled" class="panel top">
         <div class="row head"><h2 class="grow">議事録・要約</h2>
-          <button v-if="canAsk(s)" class="primary" :disabled="s.asking" @click="ask(s)">✨ skakapo で議事録を作る</button></div>
-        <p v-if="mins(s).mapC(_.isEmpty)" class="muted small">{{ if (canAsk(s).v) "文字起こしとチャットをもとに、skakapo（AI エージェント）が議事録と要約を作ります。設定の画面で skakapo と連携してから使ってください。" else "文字起こしもチャットもないため、議事録は作れません。会議中に主催者が「その他」→「文字起こしを始める」を押すと、文字起こしが残ります。" }}</p>
+          <button v-if="canAsk(s)" class="primary" :disabled="s.asking" @click="ask(s)">✨ {{ AppNames.of("skakapo") }} で議事録を作る</button></div>
+        <p v-if="mins(s).mapC(_.isEmpty)" class="muted small">{{ if (canAsk(s).v) s"文字起こしとチャットをもとに、${AppNames.of("skakapo").v}（AI エージェント）が議事録と要約を作ります。設定の画面で ${AppNames.of("skakapo").v} と連携してから使ってください。" else "文字起こしもチャットもないため、議事録は作れません。会議中に主催者が「その他」→「文字起こしを始める」を押すと、文字起こしが残ります。" }}</p>
         <div v-for="x in mins(s)" :key="x.id" class="mn">
           <div class="row mhead">
             <span class="grow small muted">{{ x.by }}・{{ Time.dateTime(x.createdAt) }} <span :class="minClass(x)">{{ MinutesStatus.label(x.status) }}</span></span>
-            <a v-if="x.fileUrl.isDefined" class="btn small primary" :href="minFileUrl(x)" target="_blank" rel="noopener" title="頼んだ人の skawau の「skaka 議事録」に保存し、参加したメンバーと共有しています">skawau で開く</a>
-            <a class="btn small" :href="x.sessionUrl" target="_blank" rel="noopener" title="skakapo の会話で直してもらえます">skakapo で開く</a>
-            <button v-if="x.mine" class="small" @click="refresh(s, x)" title="skakapo で直してもらったあとに、最新の返事を取り込みます">取り込み直す</button>
+            <a v-if="x.fileUrl.isDefined" class="btn small primary" :href="minFileUrl(x)" target="_blank" rel="noopener" :title='"頼んだ人の " + AppNames.of("skawau").v + " の「skaka 議事録」に保存し、参加したメンバーと共有しています"'>{{ AppNames.of("skawau") }} で開く</a>
+            <a class="btn small" :href="x.sessionUrl" target="_blank" rel="noopener" :title='AppNames.of("skakapo").v + " の会話で直してもらえます"'>{{ AppNames.of("skakapo") }} で開く</a>
+            <button v-if="x.mine" class="small" @click="refresh(s, x)" :title='AppNames.of("skakapo").v + " で直してもらったあとに、最新の返事を取り込みます"'>取り込み直す</button>
             <button v-if='x.body.nonEmpty' class="small" @click='Dom.copy(x.body, "議事録をコピーしました")'>コピー</button>
             <button v-if='x.body.nonEmpty' class="small" @click="save(x.body, minutesFile(s))">.md</button>
             <button v-if="x.mine" class="small ghost danger" @click="removeMinutes(s, x)">消す</button>
           </div>
-          <p v-if='x.status == "running" && x.body.isEmpty' class="muted small"><span class="spin"></span> skakapo が作っています…（数分かかることがあります）</p>
+          <p v-if='x.status == "running" && x.body.isEmpty' class="muted small"><span class="spin"></span> {{ AppNames.of("skakapo") }} が作っています…（数分かかることがあります）</p>
           <p v-if="x.error.isDefined" class="error small">{{ x.error.getOrElse("") }}</p>
-          <p v-if="x.fileError.isDefined" class="error small">skawau に保存できませんでした: {{ x.fileError.getOrElse("") }}
-            <button v-if="x.mine" class="small" @click="fileMinutes(s, x)">skawau に保存</button></p>
+          <p v-if="x.fileError.isDefined" class="error small">{{ AppNames.of("skawau") }} に保存できませんでした: {{ x.fileError.getOrElse("") }}
+            <button v-if="x.mine" class="small" @click="fileMinutes(s, x)">{{ AppNames.of("skawau") }} に保存</button></p>
           <div v-if="x.body.nonEmpty" class="md">{{ x.body }}</div>
         </div>
       </section>
@@ -122,7 +122,7 @@ def minutesFile(s: State): String = s"minutes-${day(s)}.md"
             <div class="muted small">{{ r.by }}・{{ recSpan(r) }}・{{ size(r) }}{{ sharedText(r) }}</div>
             <div v-if="r.error.isDefined" class="error small">{{ r.error.getOrElse("") }}</div>
           </div>
-          <a v-if="r.fileUrl.isDefined" class="btn primary" :href="fileUrl(r)" target="_blank" rel="noopener">skawau で開く</a>
+          <a v-if="r.fileUrl.isDefined" class="btn primary" :href="fileUrl(r)" target="_blank" rel="noopener">{{ AppNames.of("skawau") }} で開く</a>
           <button v-if='r.mine && r.status == "failed"' @click="retry(s, r)">もう一度保存</button>
           <button v-if="r.mine" class="ghost danger" title="一覧から消す" @click="remove(s, r)">消す</button>
         </div>

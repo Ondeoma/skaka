@@ -30,8 +30,8 @@ def mounted(): Unit = pageTitle("ログイン")
 <template>
   <div class="page narrow">
     <div class="card login">
-      <img src="/logo.svg" alt="" width="88" height="88" class="logo">
-      <h1>skaka</h1>
+      <img :src='AppNames.logo("/logo.svg").v' alt="" height="88" class="logo brand-logo">
+      <h1>{{ AppNames.self }}</h1>
       <p v-if="loggedOut" class="ok">ログアウトしました。</p>
       <template v-if="oidc">
         <p class="muted">組織のアカウント（OpenID Connect）でログインします。</p>
@@ -51,6 +51,6 @@ def mounted(): Unit = pageTitle("ログイン")
 <style scoped>
 .login { max-width: 420px; margin: 8vh auto 0; padding: 1.8rem; text-align: center; }
 .login form { text-align: left; }
-.logo { display: block; margin: 0 auto .4rem; }
+.logo { display: block; margin: 0 auto .4rem; width: auto; max-width: 240px; }
 .big { font-size: 1rem; padding: .6rem 2.4rem; border-radius: 999px; }
 </style>

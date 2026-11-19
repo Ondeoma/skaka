@@ -22,8 +22,8 @@ def save(s: State): Unit = {
   Store.submit(s.busy)(Api.schedule(req)) { r =>
     close()
     Store.loadRooms()
-    val miss = if (r.notFound.nonEmpty) s"（skuaka にいないため招待できなかった人: ${r.notFound.mkString(", ")}）" else ""
-    Store.toast(s"予定「${r.room.name}」を skuaka に作りました$miss")
+    val miss = if (r.notFound.nonEmpty) s"（${AppNames.nameOf("skuaka")} にいないため招待できなかった人: ${r.notFound.mkString(", ")}）" else ""
+    Store.toast(s"予定「${r.room.name}」を ${AppNames.nameOf("skuaka")} に作りました$miss")
   }
 }
 
@@ -39,7 +39,7 @@ val durations: List[(String, String)] = List(15, 30, 45, 60, 90, 120, 180).map(m
 <template>
   <Modal :onClose="_ => close()">
     <h2>会議の予定を立てる</h2>
-    <p class="muted small">会議室を作り、skuaka の自分のカレンダーに予定を作ります。予定の場所に会議室の URL が入り、招待した人のカレンダーにも出ます。</p>
+    <p class="muted small">会議室を作り、{{ AppNames.of("skuaka") }} の自分のカレンダーに予定を作ります。予定の場所に会議室の URL が入り、招待した人のカレンダーにも出ます。</p>
     <form @submit.prevent="save(s)">
       <label class="field"><span>タイトル</span><input type="text" v-model="s.title" maxlength="200" placeholder="例: 週次の振り返り" autofocus></label>
       <div class="row">

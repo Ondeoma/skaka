@@ -70,6 +70,8 @@ def removeAvatar(): Unit =
     Store.report(Api.deleteAvatar())(me => avatarDone(me, "アイコンを消しました"))
   }
 
+/** 連携するサービスの表示名（sruru に登録した名前）. */
+def name(slug: String): String = AppNames.of(slug).v
 </script>
 
 <template>
@@ -101,13 +103,13 @@ def removeAvatar(): Unit =
     <section class="panel">
       <h2>通知（この端末）</h2>
       <p><PushToggle /></p>
-      <p class="muted small">待機室で待っている人がいるとき（自分の会議室に入っていないとき）、skuaka の予定に招待された会議が始まったとき、録画を保存したときに知らせます。</p>
+      <p class="muted small">待機室で待っている人がいるとき（自分の会議室に入っていないとき）、{{ AppNames.of("skuaka") }} の予定に招待された会議が始まったとき、録画を保存したときに知らせます。</p>
     </section>
-    <TokenLinkSettings v-if="Store.skuakaEnabled" service="skuaka" title="skuaka（カレンダー）との連携"
-      about="skuaka の予定と連携すると、ホームに今後の予定と会議室が並び、予定から会議に入れます。会議の予定を立てると、skuaka に予定を作って参加者を招待します。"
+    <TokenLinkSettings v-if="Store.skuakaEnabled" service="skuaka" :title='name("skuaka") + "（カレンダー）との連携"'
+      :about='s"${name("skuaka")} の予定と連携すると、ホームに今後の予定と会議室が並び、予定から会議に入れます。会議の予定を立てると、${name("skuaka")} に予定を作って参加者を招待します。"'
       writeNeed="会議の予定を立てる" />
-    <TokenLinkSettings v-if="Store.skakapoEnabled" service="skakapo" title="skakapo（AI エージェント）との連携"
-      about="skakapo と連携すると、会議の記録の画面から、文字起こしとチャットをもとに議事録・要約を skakapo に作ってもらえます（あなたの skakapo の依頼になり、skakapo のクレジットを使います）。"
+    <TokenLinkSettings v-if="Store.skakapoEnabled" service="skakapo" :title='name("skakapo") + "（AI エージェント）との連携"'
+      :about='s"${name("skakapo")} と連携すると、会議の記録の画面から、文字起こしとチャットをもとに議事録・要約を ${name("skakapo")} に作ってもらえます（あなたの ${name("skakapo")} の依頼になり、${name("skakapo")} のクレジットを使います）。"'
       writeNeed="議事録を頼む" />
     <SkawauSettings v-if="Store.skawauEnabled" />
     <ApiTokenSettings />

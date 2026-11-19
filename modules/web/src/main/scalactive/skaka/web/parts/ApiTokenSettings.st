@@ -86,7 +86,7 @@ val periods: List[(String, String)] = List("30" -> "30日", "90" -> "90日", "36
     <p class="small">MCP サーバーの URL: <code>{{ mcpUrl }}</code>（Streamable HTTP。認証は <code>Authorization: Bearer</code> の API トークン）</p>
     <p class="small muted">MCP クライアントの設定の例:</p>
     <div class="row code"><pre class="grow">{{ jsonConf(s) }}</pre><button class="small" @click="Dom.copy(jsonConf(s).v)">コピー</button></div>
-    <p class="small muted">使えるツール: 会議室の一覧・作成・変更・削除、いま入っている人、会議の履歴とチャットの記録、skuaka の予定と会議の予定を立てる、任意の REST API の呼び出し。</p>
+    <p class="small muted">使えるツール: 会議室の一覧・作成・変更・削除、いま入っている人、会議の履歴とチャットの記録、{{ AppNames.of("skuaka") }} の予定と会議の予定を立てる、任意の REST API の呼び出し。</p>
 
     <h3>REST API</h3>
     <p class="small">画面と同じ API（<a href="/api/endpoints" target="_blank">一覧</a>）を、<code>Authorization: Bearer</code> を付けて呼べます。</p>

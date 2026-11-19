@@ -20,8 +20,10 @@ import scala.util.Try
 object Transcriber {
 
   val notice: RV[Option[TranscribeNotice]] = RV(None)
+
   /** 届いた字幕（新しいもの. 話し始めた順）. */
   val captions: RV[List[TranscriptLine]] = RV(Nil)
+
   /** 字幕を画面に出すか（端末ごとに保存）. */
   val show: RV[Boolean] = RV(Prefs.get("captions", "true") == "true")
 
@@ -33,19 +35,24 @@ object Transcriber {
     captions.v.filter(l => arrived.getOrElse(l.id, 0.0) > t - 12000).takeRight(3)
   }
 
-  def supported: Boolean = !js.isUndefined(js.Dynamic.global.AudioContext) || !js.isUndefined(js.Dynamic.global.webkitAudioContext)
+  def supported: Boolean = !js.isUndefined(js.Dynamic.global.AudioContext) ||
+    !js.isUndefined(js.Dynamic.global.webkitAudioContext)
 
   def toggleShow(): Unit = { show := !show.v; Prefs.set("captions", show.v.toString) }
 
   /** 文字起こしを始める・止める（主催者）. */
   def toggle(): Unit = Meeting.send(ClientMsg.Transcribe(notice.v.isEmpty))
 
-  def set(n: Option[TranscribeNotice]): Unit = {
+  def set(
+    n: Option[TranscribeNotice]
+  ): Unit = {
     notice := n
     if (n.isDefined) start() else stop()
   }
 
-  def caption(line: TranscriptLine): Unit = {
+  def caption(
+    line: TranscriptLine
+  ): Unit = {
     arrived = (arrived + (line.id -> js.Date.now())).filter(_._2 > js.Date.now() - 60000)
     captions := (captions.v :+ line).sortBy(_.at).takeRight(50)
   }
@@ -59,10 +66,10 @@ object Transcriber {
 
   // ---------------------------------------------------------------- 音を拾う
 
-  private val Rate      = 16000
+  private val Rate = 16000
   private val SilenceMs = 900.0
-  private val MaxMs     = 20000.0
-  private val MinMs     = 400.0
+  private val MaxMs = 20000.0
+  private val MinMs = 400.0
   private val PreFrames = 4
 
   private var ctx: Option[js.Dynamic] = None
@@ -97,7 +104,7 @@ object Transcriber {
 
   /** マイクの機器を変えたらつなぎ直す. */
   private def follow(): Unit = {
-    val t  = Meeting.audioTrack
+    val t = Meeting.audioTrack
     val id = t.map(_.id.asInstanceOf[String]).getOrElse("")
     if (id != trackId) {
       if (speaking) finish()
@@ -107,21 +114,26 @@ object Transcriber {
     }
   }
 
-  private def attach(track: js.Dynamic): Unit = Try {
+  private def attach(
+    track: js.Dynamic
+  ): Unit = Try {
     val c = ctx.getOrElse {
-      val C = if (!js.isUndefined(js.Dynamic.global.AudioContext)) js.Dynamic.global.AudioContext else js.Dynamic.global.webkitAudioContext
+      val C = if (!js.isUndefined(js.Dynamic.global.AudioContext)) js.Dynamic.global.AudioContext
+      else js.Dynamic.global.webkitAudioContext
       val x = js.Dynamic.newInstance(C)()
       ctx = Some(x)
       x
     }
     if (c.state.asInstanceOf[String] == "suspended") c.resume()
-    val src  = c.createMediaStreamSource(js.Dynamic.newInstance(js.Dynamic.global.MediaStream)(js.Array(track)))
+    val src = c.createMediaStreamSource(js.Dynamic.newInstance(js.Dynamic.global.MediaStream)(js.Array(track)))
     val proc = c.createScriptProcessor(4096, 1, 1)
     // 音は出さない（ScriptProcessor は出力先につながっていないと動かないブラウザがある）
     val mute = c.createGain()
     mute.gain.value = 0
     val rate = c.sampleRate.asInstanceOf[Double]
-    proc.onaudioprocess = ((e: js.Dynamic) => onAudio(e.inputBuffer.getChannelData(0).asInstanceOf[Float32Array], rate)): js.Function1[js.Dynamic, Unit]
+    proc.onaudioprocess = (
+      (e: js.Dynamic) => onAudio(e.inputBuffer.getChannelData(0).asInstanceOf[Float32Array], rate)
+    ): js.Function1[js.Dynamic, Unit]
     src.connect(proc)
     proc.connect(mute)
     mute.connect(c.destination)
@@ -135,13 +147,16 @@ object Transcriber {
     pre.clear()
   }
 
-  private def onAudio(buf: Float32Array, rate: Double): Unit = {
-    val ms   = buf.length / rate * 1000
-    var sum  = 0.0
-    var i    = 0
+  private def onAudio(
+    buf: Float32Array,
+    rate: Double
+  ): Unit = {
+    val ms = buf.length / rate * 1000
+    var sum = 0.0
+    var i = 0
     while (i < buf.length) { val x = buf(i).toDouble; sum += x * x; i += 1 }
-    val rms  = math.sqrt(sum / buf.length)
-    val on   = Meeting.mic.v
+    val rms = math.sqrt(sum / buf.length)
+    val on = Meeting.mic.v
     val loud = on && rms > math.max(0.015, floor * 3)
     val down = downsample(buf, rate)
     if (speaking) {
@@ -171,25 +186,29 @@ object Transcriber {
     speaking = false
     loudFrames = 0
     val voiced = total - silence
-    val parts  = chunks.toList
+    val parts = chunks.toList
     chunks.clear()
     if (voiced >= MinMs && Meeting.speechKey.nonEmpty) {
       val ago = (js.Date.now() - startedAt).toLong
       Api.speech(Meeting.speechKey, ago, wav(parts)).failed.foreach {
-        case ApiError(503, m) if js.Date.now() - lastError > 30000 => lastError = js.Date.now(); Store.toast(m, error = true)
+        case ApiError(503, m) if js.Date.now() - lastError > 30000 =>
+          lastError = js.Date.now(); Store.toast(m, error = true)
         case _ => ()
       }
     }
   }
 
   /** rate の音を 16kHz にする（区間の平均）. */
-  private def downsample(buf: Float32Array, rate: Double): Float32Array = {
+  private def downsample(
+    buf: Float32Array,
+    rate: Double
+  ): Float32Array = {
     val ratio = rate / Rate
     if (ratio <= 1.0) new Float32Array(buf)
     else {
-      val n   = (buf.length / ratio).toInt
+      val n = (buf.length / ratio).toInt
       val out = new Float32Array(n)
-      var i   = 0
+      var i = 0
       while (i < n) {
         val a = (i * ratio).toInt
         val b = math.min(buf.length, ((i + 1) * ratio).toInt).max(a + 1)
@@ -204,20 +223,34 @@ object Transcriber {
   }
 
   /** 16kHz・16bit・モノラルの WAV. */
-  private def wav(parts: List[Float32Array]): dom.Blob = {
-    val n    = parts.map(_.length).sum
+  private def wav(
+    parts: List[Float32Array]
+  ): dom.Blob = {
+    val n = parts.map(_.length).sum
     val data = new Int16Array(n)
-    var k    = 0
+    var k = 0
     parts.foreach { p =>
       var i = 0
       while (i < p.length) { data(k) = (math.max(-1.0, math.min(1.0, p(i).toDouble)) * 32767).toShort; k += 1; i += 1 }
     }
     val head = new DataView(new js.typedarray.ArrayBuffer(44))
-    def text(at: Int, s: String): Unit = s.zipWithIndex.foreach((c, i) => head.setUint8(at + i, c.toShort))
+    def text(
+      at: Int,
+      s: String
+    ): Unit = s.zipWithIndex.foreach(
+      (
+        c,
+        i
+      ) => head.setUint8(at + i, c.toShort)
+    )
     text(0, "RIFF"); head.setUint32(4, 36 + n * 2, true); text(8, "WAVE"); text(12, "fmt ")
     head.setUint32(16, 16, true); head.setUint16(20, 1, true); head.setUint16(22, 1, true)
-    head.setUint32(24, Rate, true); head.setUint32(28, Rate * 2, true); head.setUint16(32, 2, true); head.setUint16(34, 16, true)
+    head.setUint32(24, Rate, true); head.setUint32(28, Rate * 2, true); head.setUint16(32, 2, true);
+    head.setUint16(34, 16, true)
     text(36, "data"); head.setUint32(40, n * 2, true)
-    new dom.Blob(js.Array[js.Any](head.buffer, data.buffer).asInstanceOf[js.Array[dom.BlobPart]], new dom.BlobPropertyBag { `type` = "audio/wav" })
+    new dom.Blob(
+      js.Array[js.Any](head.buffer, data.buffer).asInstanceOf[js.Array[dom.BlobPart]],
+      new dom.BlobPropertyBag { `type` = "audio/wav" }
+    )
   }
 }

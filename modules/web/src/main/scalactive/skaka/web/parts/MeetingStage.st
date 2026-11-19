@@ -50,13 +50,13 @@ def react(s: State, e: String): Unit = { Meeting.react(e); s.reactions := false 
 /** 録画: 主催者だけ. skawau と連携していなければ、連携の画面を新しいタブで開く. */
 def record(s: State): Unit = {
   s.more := false
-  if (Recorder.mine.v) Dialog.confirm("録画を止めますか？（skawau に保存します）", "録画を止める")(Recorder.stop())
+  if (Recorder.mine.v) Dialog.confirm(s"録画を止めますか？（${AppNames.nameOf("skawau")} に保存します）", "録画を止める")(Recorder.stop())
   else Store.report(Api.skawau()) { l =>
     if (!l.linked)
-      Dialog.confirm("録画は skawau に保存します。skawau と連携していないため、新しいタブで連携の画面を開きますか？（連携したら、もう一度録画を押してください）",
+      Dialog.confirm(s"録画は ${AppNames.nameOf("skawau")} に保存します。${AppNames.nameOf("skawau")} と連携していないため、新しいタブで連携の画面を開きますか？（連携したら、もう一度録画を押してください）",
         "連携の画面を開く", danger = false)(dom.window.open(Api.connectSkawauUrl("/settings"), "_blank"))
     else
-      Dialog.confirm("録画を始めますか？ 参加者全員に「録画中」と表示されます。録り終えると、あなたの skawau の「skaka 録画」フォルダに保存し、" +
+      Dialog.confirm(s"録画を始めますか？ 参加者全員に「録画中」と表示されます。録り終えると、あなたの ${AppNames.nameOf("skawau")} の「skaka 録画」フォルダに保存し、" +
         "会議に参加したメンバーと共有します。", "録画を始める", danger = false)(Recorder.start())
   }
 }
@@ -162,7 +162,7 @@ def rstyle(r: Reaction): String = s"left: ${r.left}%"
         <div v-if="s.more" class="popup menu" @click="s.more := false">
           <a href="#" @click.prevent="s.devices := true">⚙ カメラ・マイクの設定</a>
           <a href="#" @click.prevent='Dom.copy(props.url, "会議室の URL をコピーしました")'>🔗 会議室の URL をコピー</a>
-          <a v-if="canRecord" href="#" @click.prevent="record(s)">{{ if (Recorder.mine.v) "⏹ 録画を止める" else "⏺ 録画する（skawau に保存）" }}</a>
+          <a v-if="canRecord" href="#" @click.prevent="record(s)">{{ if (Recorder.mine.v) "⏹ 録画を止める" else "⏺ 録画する（" + AppNames.of("skawau").v + " に保存）" }}</a>
           <a v-if="canTranscribe" href="#" @click.prevent="transcribe(s)">{{ if (transcribing.v) "📝 文字起こしを止める" else "📝 文字起こしを始める" }}</a>
           <a v-if="transcribing" href="#" @click.prevent="Transcriber.toggleShow()">{{ if (Transcriber.show.v) "💬 字幕を隠す" else "💬 字幕を出す" }}</a>
           <a v-if="Meeting.isHost" href="#" @click.prevent="Meeting.send(ClientMsg.Lock(!Meeting.locked.v))">{{ if (Meeting.locked.v) "🔓 ロックを外す" else "🔒 会議をロック" }}</a>

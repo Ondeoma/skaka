@@ -9,23 +9,6 @@ import scala.scalajs.js
 import scala.util.Try
 
 /**
- * 一定の間隔で呼ぶ時計. タブが裏にあると setInterval・requestAnimationFrame は遅くなる（止まる）ため、Worker の時計を使う.
- * 録画（Recorder）と背景（Background）が映像を描き続けるのに使う. 返す関数で止める.
- */
-object Ticker {
-  private lazy val src = dom.URL.createObjectURL(new dom.Blob(js.Array(
-    "let t; onmessage = e => { clearInterval(t); if (e.data > 0) t = setInterval(() => postMessage(0), e.data); };"),
-    new dom.BlobPropertyBag { `type` = "text/javascript" }))
-
-  def every(ms: Int)(f: () => Unit): () => Unit = {
-    val w = new dom.Worker(src)
-    w.onmessage = (_: dom.MessageEvent) => f()
-    w.postMessage(ms)
-    () => { w.postMessage(0); w.terminate() }
-  }
-}
-
-/**
  * カメラの背景をぼかす・画像に差し替える（この端末の設定）. 人物の切り抜きは MediaPipe の ImageSegmenter（frontend/segment.js. 使うときだけ読み込む）.
  * カメラの映像を小さくして切り抜き（人物らしさの 0〜1）、それを透明度にして、ぼかした映像・画像の上に人物を重ねた canvas を、送る映像にする.
  * 処理はすべてこの端末の中で行う（映像は外へ出さない）.
@@ -34,23 +17,32 @@ object Background {
 
   /** none / blur（弱）/ blur-strong / 画像（あらかじめ用意したものの id か custom）. */
   val mode: RV[String] = RV(Prefs.get("bg", "none"))
+
   /** 自分で選んだ画像（1280×720 に縮めた JPEG の data URL. この端末に保存）. */
   val custom: RV[Option[String]] = RV(Option(Prefs.get("bg.custom", "")).filter(_.nonEmpty))
+
   /** 読み込み中（初回は切り抜きの WASM を読む）. */
   val loading: RV[Boolean] = RV(false)
 
   /** あらかじめ用意した背景（id, 名前, URL）. */
   val presets: List[(String, String, String)] = List(
-    ("office", "部屋", "/backgrounds/office.svg"), ("sky", "青空", "/backgrounds/sky.svg"),
-    ("gradient", "紺", "/backgrounds/gradient.svg"), ("skaka", "skaka", "/backgrounds/skaka.svg"))
+    ("office", "部屋", "/backgrounds/office.svg"),
+    ("sky", "青空", "/backgrounds/sky.svg"),
+    ("gradient", "紺", "/backgrounds/gradient.svg"),
+    ("skaka", "skaka", "/backgrounds/skaka.svg")
+  )
 
   def active: Boolean = mode.v != "none"
 
   /** 背景を変える（会議中でもすぐ反映）. */
-  def set(m: String): Unit = { mode := m; Prefs.set("bg", m); Meeting.applyBackground() }
+  def set(
+    m: String
+  ): Unit = { mode := m; Prefs.set("bg", m); Meeting.applyBackground() }
 
   /** 自分の画像を選んだ: 1280×720 に収まるよう切り取って JPEG にし、この端末に保存して使う. */
-  def upload(file: dom.File): Unit = {
+  def upload(
+    file: dom.File
+  ): Unit = {
     val url = dom.URL.createObjectURL(file)
     load(url).foreach { img =>
       dom.URL.revokeObjectURL(url)
@@ -60,7 +52,9 @@ object Background {
       cover(c.getContext("2d").asInstanceOf[js.Dynamic], img, 1280, 720)
       val data = c.toDataURL("image/jpeg", 0.85)
       Try(dom.window.localStorage.setItem("skaka.bg.custom", data)).fold(
-        _ => Store.toast("画像が大きすぎて保存できません（この会議の間だけ使います）", error = true), _ => ())
+        _ => Store.toast("画像が大きすぎて保存できません（この会議の間だけ使います）", error = true),
+        _ => ()
+      )
       custom := Some(data)
       images -= "custom"
       set("custom")
@@ -78,7 +72,9 @@ object Background {
   private val Small = 256 // 切り抜きにかける映像の幅（小さいほど速い. 縁は拡大するときになめらかになる）
 
   /** カメラのトラックから送るトラックを作る. 背景なし・使えないときはカメラのまま. */
-  def attach(camera: js.Dynamic): Future[js.Dynamic] =
+  def attach(
+    camera: js.Dynamic
+  ): Future[js.Dynamic] =
     if (!active) { detach(); Future.successful(camera) }
     else {
       loading := true
@@ -110,17 +106,22 @@ object Background {
   }
 
   /** 切り抜きは WebGL2 で映像を取り込む（CPU で処理するときも）. 使えなければ初めから断る. */
-  private def webgl: Boolean = Try(dom.document.createElement("canvas").asInstanceOf[js.Dynamic].getContext("webgl2") != null).getOrElse(false)
+  private def webgl: Boolean =
+    Try(dom.document.createElement("canvas").asInstanceOf[js.Dynamic].getContext("webgl2") != null).getOrElse(false)
 
   private def model(): Future[js.Dynamic] = segmenter match {
     case Some(s) => Future.successful(s)
     case None if !webgl => Future.failed(new Exception("WebGL2 が使えません"))
     case None =>
-      js.Dynamic.global.skakaSegmenter().asInstanceOf[js.Promise[js.Dynamic]].toFuture.map { s => segmenter = Some(s); s }
+      js.Dynamic.global.skakaSegmenter().asInstanceOf[js.Promise[js.Dynamic]].toFuture.map { s =>
+        segmenter = Some(s); s
+      }
   }
 
-  private def load(url: String): Future[dom.HTMLImageElement] = {
-    val p   = Promise[dom.HTMLImageElement]()
+  private def load(
+    url: String
+  ): Future[dom.HTMLImageElement] = {
+    val p = Promise[dom.HTMLImageElement]()
     val img = dom.document.createElement("img").asInstanceOf[dom.HTMLImageElement]
     img.onload = (_: dom.Event) => p.trySuccess(img)
     img.asInstanceOf[js.Dynamic].onerror = (_: dom.Event) => p.tryFailure(new Exception("画像を読み込めません"))
@@ -134,14 +135,20 @@ object Background {
     val url = if (m == "custom") custom.v else presets.find(_._1 == m).map(_._3)
     url match {
       case None => Future.successful(None)
-      case Some(u) => images.get(m).fold(load(u).map { i => images += m -> i; Some(i) })(i => Future.successful(Some(i)))
+      case Some(u) =>
+        images.get(m).fold(load(u).map { i => images += m -> i; Some(i) })(i => Future.successful(Some(i)))
     }
   }
 
-  private def cover(g: js.Dynamic, image: dom.HTMLImageElement, w: Double, h: Double): Unit = {
+  private def cover(
+    g: js.Dynamic,
+    image: dom.HTMLImageElement,
+    w: Double,
+    h: Double
+  ): Unit = {
     val img = image.asInstanceOf[js.Dynamic]
     val (iw, ih) = (img.width.asInstanceOf[Double], img.height.asInstanceOf[Double])
-    val k        = math.max(w / iw, h / ih)
+    val k = math.max(w / iw, h / ih)
     g.drawImage(img, (w - iw * k) / 2, (h - ih * k) / 2, iw * k, ih * k)
   }
 
@@ -150,21 +157,25 @@ object Background {
     (c, c.getContext("2d").asInstanceOf[js.Dynamic])
   }
 
-  private def start(seg: js.Dynamic, camera: js.Dynamic, img: Option[dom.HTMLImageElement]): js.Dynamic = {
+  private def start(
+    seg: js.Dynamic,
+    camera: js.Dynamic,
+    img: Option[dom.HTMLImageElement]
+  ): js.Dynamic = {
     detach()
     val video = dom.document.createElement("video").asInstanceOf[dom.HTMLVideoElement]
     video.muted = true
     video.asInstanceOf[js.Dynamic].playsInline = true
     video.asInstanceOf[js.Dynamic].srcObject = js.Dynamic.newInstance(js.Dynamic.global.MediaStream)(js.Array(camera))
     video.play()
-    val (out, g)      = canvas()
-    val (small, sg)   = canvas() // 切り抜きにかける小さな映像
-    val (mask, mg)    = canvas() // 人物らしさを透明度にしたもの
-    val (person, pg)  = canvas() // 人物だけ
-    val (blur, bg)    = canvas() // ぼかし用の縮小（canvas の filter が使えないブラウザ）
-    val strong        = mode.v == "blur-strong"
-    val filter        = !js.isUndefined(g.filter)
-    val fps           = Quality.fps.v
+    val (out, g) = canvas()
+    val (small, sg) = canvas() // 切り抜きにかける小さな映像
+    val (mask, mg) = canvas() // 人物らしさを透明度にしたもの
+    val (person, pg) = canvas() // 人物だけ
+    val (blur, bg) = canvas() // ぼかし用の縮小（canvas の filter が使えないブラウザ）
+    val strong = mode.v == "blur-strong"
+    val filter = !js.isUndefined(g.filter)
+    val fps = Quality.fps.v
     // 最初の大きさ（カメラの映像が来るまで）
     out.width = 640
     out.height = 360
@@ -177,17 +188,19 @@ object Background {
       if (out.width != w || out.height != h) { out.width = w; out.height = h; person.width = w; person.height = h }
       val sw = Small
       val sh = math.max(1, (Small * h.toDouble / w).round.toInt)
-      if (small.width != sw || small.height != sh) { small.width = sw; small.height = sh; mask.width = sw; mask.height = sh; data = None }
+      if (small.width != sw || small.height != sh) {
+        small.width = sw; small.height = sh; mask.width = sw; mask.height = sh; data = None
+      }
       sg.drawImage(video, 0, 0, sw, sh)
       // 切り抜き: 人物らしさ（0〜1）を透明度に（0.25〜0.75 をなめらかにつなぐ）
       val res = seg.segmentForVideo(small, dom.window.performance.now())
       Try {
-        val m  = res.confidenceMasks.asInstanceOf[js.Array[js.Dynamic]](0)
-        val f  = m.getAsFloat32Array().asInstanceOf[js.typedarray.Float32Array]
+        val m = res.confidenceMasks.asInstanceOf[js.Array[js.Dynamic]](0)
+        val f = m.getAsFloat32Array().asInstanceOf[js.typedarray.Float32Array]
         val id = data.getOrElse { val d = mg.createImageData(sw, sh).asInstanceOf[dom.ImageData]; data = Some(d); d }
         val px = id.data.asInstanceOf[js.typedarray.Uint8ClampedArray]
-        var i  = 0
-        val n  = math.min(f.length, sw * sh)
+        var i = 0
+        val n = math.min(f.length, sw * sh)
         while (i < n) {
           val x = (f(i) - 0.25) / 0.5
           val a = if (x <= 0) 0.0 else if (x >= 1) 1.0 else x * x * (3 - 2 * x)

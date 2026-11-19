@@ -11,9 +11,14 @@ import org.scalajs.dom
  */
 object Main {
 
-  def main(args: Array[String]): Unit = {
+  def main(
+    args: Array[String]
+  ): Unit = {
     ScalactiveConfig.titleTemplate = "%s | skaka"
     ScalactiveConfig.defaultTitle = Some("skaka")
+    AppNames.init("skaka")
+    // すべての API の要求に X-Skaka を付ける（サーバーはこれのない更新を CSRF として断る. Api・Pwa・Observe で共通）
+    sbirds.web.Fetch.extraHeaders = Map("X-Skaka" -> "1")
     Theme.apply()
     // skorimako のブラウザの観測（設定があるときだけ）と、PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
     Observe.start()

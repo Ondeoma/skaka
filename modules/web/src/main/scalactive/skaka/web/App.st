@@ -29,6 +29,7 @@ def mounted(s: State): Unit = {
     if (path.startsWith("/login") || path.startsWith("/r/")) s.ready := true
     else Store.report(Api.me()) { me =>
       Store.me := Some(me)
+      AppNames.set(me.appNames)
       Observe.setUser(me.id.toString)
       Store.loadRooms()
       s.ready := true
@@ -53,7 +54,7 @@ def schedulers = Store.scheduler.mapC(_.toList)
 
 <template>
   <header v-if="!inRoom.v" class="top">
-    <Link to="/" cls="logo"><span class="brand"><img src="/logo.svg" alt="" width="34" height="34"><span class="hide-sp">skaka</span></span></Link>
+    <Link to="/" cls="logo"><span class="brand"><img :src='AppNames.logo("/logo.svg").v' alt="" height="34" class="brand-logo"><span class="hide-sp">{{ AppNames.self }}</span></span></Link>
     <nav v-if="loggedIn" class="navs">
       <Link to="/" :cls='navClass("/").v'>会議室</Link>
       <Link to="/meetings" :cls='navClass("/meetings").v'>履歴</Link>
@@ -88,7 +89,7 @@ def schedulers = Store.scheduler.mapC(_.toList)
   background: var(--bg); border-bottom: 1px solid var(--line); }
 .brand { font-weight: 700; font-size: 1.3rem; color: var(--fg); letter-spacing: .01em; display: inline-flex; align-items: center; gap: .5rem;
   white-space: nowrap; margin-right: 1.2rem; }
-.brand img { display: block; }
+.brand img { display: block; width: auto; max-width: 140px; }
 .navs { display: flex; gap: .2rem; }
 .spacer { flex: 1; }
 .me { position: relative; }

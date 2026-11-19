@@ -39,7 +39,7 @@ def unmounted(s: State): Unit = {
 def load(s: State): Unit = Api.entry(code).onComplete {
   case Success(e) =>
     s.entry := Some(e)
-    e.me.foreach { m => Store.me := Some(m); Observe.setUser(m.id.toString) }
+    e.me.foreach { m => Store.me := Some(m); AppNames.set(m.appNames); Observe.setUser(m.id.toString) }
     pageTitle(e.name)
     Meeting.roomName := e.name
     Meeting.prepare()
@@ -83,7 +83,7 @@ def meAvatar = Store.me.mapC(_.map(_.brief))
   <div class="room">
     <div v-if="s.error.mapC(_.nonEmpty)" class="center">
       <div class="card msg">
-        <img src="/logo.svg" width="72" height="72" alt="">
+        <img :src='AppNames.logo("/logo.svg").v' height="72" alt="" class="brand-logo">
         <h1>会議室に入れません</h1>
         <p>{{ s.error }}</p>
         <Link v-if="loggedIn" to="/" cls="btn primary">ホームへ</Link>
@@ -135,7 +135,7 @@ def meAvatar = Store.me.mapC(_.map(_.brief))
 
     <div v-else class="center">
       <div class="card msg">
-        <img src="/logo.svg" width="72" height="72" alt="">
+        <img :src='AppNames.logo("/logo.svg").v' height="72" alt="" class="brand-logo">
         <h1>{{ entryName(s) }}</h1>
         <p>{{ Meeting.reason }}</p>
         <div class="row center-row">
@@ -153,6 +153,7 @@ def meAvatar = Store.me.mapC(_.map(_.brief))
 .room { height: 100%; }
 .center { height: 100%; display: flex; align-items: center; justify-content: center; padding: 1rem; overflow-y: auto; }
 .msg { text-align: center; max-width: 460px; padding: 2rem; }
+.msg .brand-logo { width: auto; max-width: 100%; }
 .msg h1 { font-size: 1.3rem; margin: .8rem 0 .5rem; }
 .center-row { justify-content: center; }
 .prejoin { display: flex; gap: 2rem; align-items: center; max-width: 1080px; width: 100%; flex-wrap: wrap; justify-content: center; }
