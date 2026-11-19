@@ -45,32 +45,27 @@ enum Effect {
  * （出入りしても主催者のまま）. recording は録画中であること（録画そのものは録画する人の画面とサーバーの Recorder が行う）.
  * transcribing は文字起こし中であること（音声は話す人の端末が送り、サーバーの Transcriber が文字にする）.
  */
-final case class Live(
-  roomId: UUID,
-  ownerId: UUID,
-  lobbyAll: Boolean,
-  meetingId: Option[UUID] = None,
-  startedAt: Option[Instant] = None,
-  locked: Boolean = false,
-  peers: Vector[PeerInfo] = Vector.empty,
-  waiting: Vector[PeerInfo] = Vector.empty,
-  chat: Vector[ChatMsg] = Vector.empty,
-  rows: Map[String, UUID] = Map.empty,
-  hostUsers: Set[UUID] = Set.empty,
-  recording: Option[RecordingNotice] = None,
-  transcribing: Option[TranscribeNotice] = None) {
+final case class Live(roomId: UUID,
+                      ownerId: UUID,
+                      lobbyAll: Boolean,
+                      meetingId: Option[UUID] = None,
+                      startedAt: Option[Instant] = None,
+                      locked: Boolean = false,
+                      peers: Vector[PeerInfo] = Vector.empty,
+                      waiting: Vector[PeerInfo] = Vector.empty,
+                      chat: Vector[ChatMsg] = Vector.empty,
+                      rows: Map[String, UUID] = Map.empty,
+                      hostUsers: Set[UUID] = Set.empty,
+                      recording: Option[RecordingNotice] = None,
+                      transcribing: Option[TranscribeNotice] = None) {
   def isEmpty: Boolean = peers.isEmpty && waiting.isEmpty
-  def peer(
-    id: String
-  ): Option[PeerInfo] = peers.find(_.id == id)
+  def peer(id: String): Option[PeerInfo] = peers.find(_.id == id)
   def hostPresent: Boolean = peers.exists(_.host)
 
   /** 待機室の人を入れられる人: 主催者. 主催者がいなければ、ログインしているメンバー. */
   def admitters: Vector[PeerInfo] = if hostPresent then peers.filter(_.host) else peers.filterNot(_.guest)
 
-  def canAdmit(
-    id: String
-  ): Boolean = admitters.exists(_.id == id)
+  def canAdmit(id: String): Boolean = admitters.exists(_.id == id)
 }
 
 object Conference {
@@ -80,42 +75,23 @@ object Conference {
 
   private type R = (Live, List[Effect])
 
-  private def to(
-    ps: Iterable[PeerInfo],
-    msg: ServerMsg
-  ): List[Effect] = ps.toList.map(p => Effect.Send(p.id, msg))
-  private def others(
-    l: Live,
-    id: String,
-    msg: ServerMsg
-  ): List[Effect] = to(l.peers.filterNot(_.id == id), msg)
+  private def to(ps: Iterable[PeerInfo], msg: ServerMsg): List[Effect] = ps.toList.map(p => Effect.Send(p.id, msg))
+  private def others(l: Live, id: String, msg: ServerMsg): List[Effect] = to(l.peers.filterNot(_.id == id), msg)
 
   /** 待機室が変わったことを、入れられる人に知らせる. */
-  private def lobbyNotice(
-    l: Live
-  ): List[Effect] = to(l.admitters, ServerMsg.Lobby(l.waiting.toList))
+  private def lobbyNotice(l: Live): List[Effect] = to(l.admitters, ServerMsg.Lobby(l.waiting.toList))
 
-  private def closeWith(
-    id: String,
-    reason: String
-  ): List[Effect] = List(Effect.Send(id, ServerMsg.Closed(reason)), Effect.Disconnect(id))
+  private def closeWith(id: String, reason: String): List[Effect] =
+    List(Effect.Send(id, ServerMsg.Closed(reason)), Effect.Disconnect(id))
 
   /** 主催者か（会議室の持ち主と、この会議で主催者にされた人）. */
-  def isHost(
-    l: Live,
-    userId: Option[UUID]
-  ): Boolean = userId.exists(u => u == l.ownerId || l.hostUsers(u))
+  def isHost(l: Live, userId: Option[UUID]): Boolean = userId.exists(u => u == l.ownerId || l.hostUsers(u))
 
   /**
    * 接続した. peer.host は呼ぶ側では決めず、ここで決める.
    * ゲストはいつも待機室へ. メンバーは lobbyAll のときだけ待機室へ（主催者を除く）. ロック中は主催者だけが入れる.
    */
-  def arrive(
-    l: Live,
-    peer0: PeerInfo,
-    now: Instant,
-    fresh: () => UUID
-  ): R = {
+  def arrive(l: Live, peer0: PeerInfo, now: Instant, fresh: () => UUID): R = {
     val peer = peer0.copy(host = isHost(l, peer0.userId))
     if l.peers.size + l.waiting.size >= MaxPeers then (l, closeWith(peer.id, s"この会議室は満員です（$MaxPeers 人まで）"))
     else if l.locked && !peer.host then (l, closeWith(peer.id, "会議はロックされています。主催者にロックを外してもらってください"))
@@ -125,12 +101,7 @@ object Conference {
     } else admit(l, peer, now, fresh)
   }
 
-  private def admit(
-    l: Live,
-    peer: PeerInfo,
-    now: Instant,
-    fresh: () => UUID
-  ): R = {
+  private def admit(l: Live, peer: PeerInfo, now: Instant, fresh: () => UUID): R = {
     val (mid, started, startFx) = l.meetingId match {
       case Some(id) => (id, l.startedAt.getOrElse(now), Nil)
       case None => val id = fresh(); (id, now, List(Effect.StartMeeting(id, l.roomId, now)))
@@ -163,11 +134,7 @@ object Conference {
   }
 
   /** 接続が切れた. 最後の1人が出たら会議を終える. */
-  def leave(
-    l: Live,
-    id: String,
-    now: Instant
-  ): R =
+  def leave(l: Live, id: String, now: Instant): R =
     if l.waiting.exists(_.id == id) then {
       val l2 = l.copy(waiting = l.waiting.filterNot(_.id == id))
       (l2, lobbyNotice(l2))
@@ -194,20 +161,12 @@ object Conference {
     }
 
   /** 録画が始まった（Some）・終わった（None. id の録画のときだけ）. 全員に知らせる. */
-  def recording(
-    l: Live,
-    notice: Option[RecordingNotice],
-    id: UUID
-  ): R =
+  def recording(l: Live, notice: Option[RecordingNotice], id: UUID): R =
     if notice.isEmpty && !l.recording.exists(_.id == id) then (l, Nil)
     else (l.copy(recording = notice), to(l.peers, ServerMsg.Recording(notice)))
 
   /** 文字起こしの1行: 文字起こし中なら、全員に送って保存する. */
-  def caption(
-    l: Live,
-    line: TranscriptLine,
-    now: Instant
-  ): R =
+  def caption(l: Live, line: TranscriptLine, now: Instant): R =
     (l.transcribing, l.meetingId) match {
       case (Some(_), Some(m)) if l.peer(line.peer).isDefined =>
         (l, Effect.SaveTranscript(m, line, now) :: to(l.peers, ServerMsg.Caption(line)))
@@ -215,13 +174,7 @@ object Conference {
     }
 
   /** 参加者からのメッセージ. */
-  def handle(
-    l: Live,
-    from: String,
-    msg: ClientMsg,
-    now: Instant,
-    fresh: () => UUID
-  ): R =
+  def handle(l: Live, from: String, msg: ClientMsg, now: Instant, fresh: () => UUID): R =
     l.peer(from) match {
       case None =>
         // 待機室の人は、待つことしかできない
@@ -232,26 +185,12 @@ object Conference {
       case Some(me) => fromPeer(l, me, msg, now, fresh)
     }
 
-  private def hostOnly(
-    l: Live,
-    me: PeerInfo
-  )(
-    f: => R
-  ): R =
+  private def hostOnly(l: Live, me: PeerInfo)(f: => R): R =
     if me.host then f else (l, List(Effect.Send(me.id, ServerMsg.Error("主催者だけができる操作です"))))
 
-  private def update(
-    l: Live,
-    p: PeerInfo
-  ): Live = l.copy(peers = l.peers.map(x => if x.id == p.id then p else x))
+  private def update(l: Live, p: PeerInfo): Live = l.copy(peers = l.peers.map(x => if x.id == p.id then p else x))
 
-  private def fromPeer(
-    l: Live,
-    me: PeerInfo,
-    msg: ClientMsg,
-    now: Instant,
-    fresh: () => UUID
-  ): R = msg match {
+  private def fromPeer(l: Live, me: PeerInfo, msg: ClientMsg, now: Instant, fresh: () => UUID): R = msg match {
     case ClientMsg.Ping() => (l, List(Effect.Send(me.id, ServerMsg.Pong())))
 
     case ClientMsg.Signal(target, data) =>
@@ -367,10 +306,7 @@ object Conference {
 
 /** skuaka の予定の場所・説明から、skaka の会議室のコードを探す. */
 object RoomLinks {
-  def find(
-    publicUrl: String,
-    texts: String*
-  ): Option[String] = {
+  def find(publicUrl: String, texts: String*): Option[String] = {
     val re = (java.util.regex.Pattern.quote(publicUrl.stripSuffix("/")) + "/r/(" + RoomCode.Pattern + ")").r
     texts.iterator.flatMap(t => re.findFirstMatchIn(t).map(_.group(1))).nextOption()
   }

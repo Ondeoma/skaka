@@ -11,64 +11,36 @@ import java.time.Instant
 import java.util.UUID
 
 /** 会議の履歴（開いた会議・参加者・チャット）. 書き込みは会議中の Hub から. */
-final class MeetingStore(
-  xa: Transactor[IO]) extends TxStore(xa) {
+final class MeetingStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   /** 会議を始める（同じ id で何度呼んでもよい）. */
-  def start(
-    id: UUID,
-    roomId: UUID,
-    at: Instant
-  ): IO[Unit] = tx(
+  def start(id: UUID, roomId: UUID, at: Instant): IO[Unit] = tx(
     sql"insert into meeting (id, room_id, started_at) values ($id, $roomId, $at) on conflict (id) do nothing".update.run.void
   )
 
-  def end(
-    id: UUID,
-    at: Instant
-  ): IO[Unit] = tx(
-    sql"update meeting set ended_at = $at where id = $id and ended_at is null".update.run *>
-      sql"update meeting_participant set left_at = $at where meeting_id = $id and left_at is null".update.run.void
-  )
+  def end(id: UUID, at: Instant): IO[Unit] =
+    tx(sql"update meeting set ended_at = $at where id = $id and ended_at is null".update.run *>
+      sql"update meeting_participant set left_at = $at where meeting_id = $id and left_at is null".update.run.void)
 
   /** 起動したとき: 前に動いていたときの、終わっていない会議を終える. */
-  def endAll(
-    at: Instant
-  ): IO[Int] = tx(
-    sql"update meeting_participant set left_at = $at where left_at is null".update.run *>
-      sql"update meeting set ended_at = $at where ended_at is null".update.run
-  )
+  def endAll(at: Instant): IO[Int] =
+    tx(sql"update meeting_participant set left_at = $at where left_at is null".update.run *>
+      sql"update meeting set ended_at = $at where ended_at is null".update.run)
 
-  def joined(
-    id: UUID,
-    meetingId: UUID,
-    userId: Option[UUID],
-    name: String,
-    guest: Boolean,
-    at: Instant
-  ): IO[Unit] = tx(
+  def joined(id: UUID, meetingId: UUID, userId: Option[UUID], name: String, guest: Boolean, at: Instant): IO[Unit] = tx(
     sql"""insert into meeting_participant (id, meeting_id, user_id, name, guest, joined_at)
           values ($id, $meetingId, $userId, $name, $guest, $at)""".update.run.void
   )
 
-  def left(
-    id: UUID,
-    at: Instant
-  ): IO[Unit] = tx(sql"update meeting_participant set left_at = $at where id = $id".update.run.void)
+  def left(id: UUID, at: Instant): IO[Unit] =
+    tx(sql"update meeting_participant set left_at = $at where id = $id".update.run.void)
 
-  def chat(
-    meetingId: UUID,
-    m: ChatMsg,
-    at: Instant
-  ): IO[Unit] = tx(
+  def chat(meetingId: UUID, m: ChatMsg, at: Instant): IO[Unit] = tx(
     sql"""insert into chat_message (id, meeting_id, user_id, name, body, created_at)
           values (${UUID.fromString(m.id)}, $meetingId, ${m.userId}, ${m.name}, ${m.text}, $at)""".update.run.void
   )
 
-  def transcript(
-    meetingId: UUID,
-    l: TranscriptLine
-  ): IO[Unit] = tx(
+  def transcript(meetingId: UUID, l: TranscriptLine): IO[Unit] = tx(
     sql"""insert into transcript_line (id, meeting_id, user_id, name, body, spoken_at)
           values (${UUID.fromString(l.id)}, $meetingId, ${l.userId}, ${l.name}, ${l.text}, ${Instant.parse(
         l.at
@@ -83,42 +55,26 @@ final class MeetingStore(
          (select count(*) from chat_message c where c.meeting_id = m.id)"""
 
   private type MRow = (UUID, String, String, Instant, Option[Instant], Long, Long)
-  private def meeting(
-    r: MRow
-  ): MeetingDto = MeetingDto(r._1, r._2, r._3, r._4.toString, r._5.map(_.toString), r._6.toInt, r._7.toInt)
+  private def meeting(r: MRow): MeetingDto =
+    MeetingDto(r._1, r._2, r._3, r._4.toString, r._5.map(_.toString), r._6.toInt, r._7.toInt)
 
   /** 見られる会議か（自分の会議室の会議と、自分が参加した会議）. */
-  def canSee(
-    userId: UUID,
-    id: UUID
-  ): IO[Boolean] = tx(
-    (fr"select exists (select 1 from meeting m join room r on r.id = m.room_id where m.id = $id and" ++
-      visible(userId) ++ fr")").query[Boolean].unique
-  )
+  def canSee(userId: UUID, id: UUID): IO[Boolean] =
+    tx((fr"select exists (select 1 from meeting m join room r on r.id = m.room_id where m.id = $id and" ++
+      visible(userId) ++ fr")").query[Boolean].unique)
 
   /** 見られる会議: 自分の会議室の会議と、自分が参加した会議. */
-  private def visible(
-    userId: UUID
-  ): Fragment =
+  private def visible(userId: UUID): Fragment =
     fr"(r.owner_id = $userId or exists (select 1 from meeting_participant p where p.meeting_id = m.id and p.user_id = $userId))"
 
   /** 会議の一覧（新しい順）. room で会議室を絞る. */
-  def list(
-    userId: UUID,
-    room: Option[UUID],
-    before: Option[Instant],
-    limit: Int
-  ): IO[List[MeetingDto]] = tx(
-    (fr"select" ++ meetingCols ++ fr"from meeting m join room r on r.id = m.room_id where" ++ visible(userId) ++
-      room.fold(Fragment.empty)(id => fr"and m.room_id = $id") ++
-      before.fold(Fragment.empty)(b => fr"and m.started_at < $b") ++
-      fr"order by m.started_at desc limit $limit").query[MRow].to[List].map(_.map(meeting))
-  )
+  def list(userId: UUID, room: Option[UUID], before: Option[Instant], limit: Int): IO[List[MeetingDto]] =
+    tx((fr"select" ++ meetingCols ++ fr"from meeting m join room r on r.id = m.room_id where" ++ visible(userId) ++
+      room.fold(Fragment.empty)(id => fr"and m.room_id = $id") ++ before.fold(Fragment.empty)(b =>
+        fr"and m.started_at < $b"
+      ) ++ fr"order by m.started_at desc limit $limit").query[MRow].to[List].map(_.map(meeting)))
 
-  def detail(
-    userId: UUID,
-    id: UUID
-  ): IO[Option[MeetingDetailDto]] = tx(
+  def detail(userId: UUID, id: UUID): IO[Option[MeetingDetailDto]] = tx(
     (fr"select" ++ meetingCols ++ fr"from meeting m join room r on r.id = m.room_id where m.id = $id and" ++
       visible(userId))
       .query[MRow].option.flatMap {
@@ -145,8 +101,4 @@ final class MeetingStore(
 }
 
 /** 兄弟のサービス（skuaka・skakapo）の API トークンでの連携: 暗号化したトークン、先頭（表示用）、そのサービスでの名前、書き込めるか. */
-final case class TokenLink(
-  tokenEnc: Array[Byte],
-  prefix: String,
-  account: String,
-  canWrite: Boolean)
+final case class TokenLink(tokenEnc: Array[Byte], prefix: String, account: String, canWrite: Boolean)

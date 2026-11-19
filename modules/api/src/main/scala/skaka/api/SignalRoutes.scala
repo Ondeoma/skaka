@@ -16,10 +16,7 @@ object SignalRoutes {
   /** 1つのメッセージの上限（SDP は数 KB. それより大きいものは読まない）. */
   val MaxFrame = 64 * 1024
 
-  def apply(
-    hub: Hub,
-    ws: WebSocketBuilder[IO]
-  ): HttpRoutes[IO] = {
+  def apply(hub: Hub, ws: WebSocketBuilder[IO]): HttpRoutes[IO] = {
     val dsl = org.http4s.dsl.io
     import dsl.*
     HttpRoutes.of[IO] {

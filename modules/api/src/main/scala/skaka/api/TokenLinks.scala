@@ -15,22 +15,19 @@ import skaka.shared.*
 type SkuakaClient = TokenApi
 
 object SkuakaClient {
-  def apply(
-    base: String,
-    http: Client[IO]
-  ): TokenApi = new TokenApi("skuaka", "SKUAKA_URL", base, base, "skuaka_", http)
+  def apply(base: String, http: Client[IO]): TokenApi =
+    new TokenApi("skuaka", "SKUAKA_URL", base, base, "skuaka_", http)
 }
 
 /**
  * API トークンでの連携（skuaka・skakapo で共通）: トークンの登録・確かめ・解除（GET・PUT・DELETE /api/{service}）と、
  * 登録したトークンでそのサービスを呼ぶ補助.
  */
-final class TokenLinks(
-  api: Option[TokenApi],
-  links: LinkStore,
-  box: SecretBox,
-  val sessions: SessionAuth,
-  service: String) extends RouteSupport {
+final class TokenLinks(api: Option[TokenApi],
+                       links: LinkStore,
+                       box: SecretBox,
+                       val sessions: SessionAuth,
+                       service: String) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "api" / `service` => getLink(req)
@@ -38,14 +35,10 @@ final class TokenLinks(
     case req @ DELETE -> Root / "api" / `service` => deleteLink(req)
   }
 
-  private def getLink(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getLink(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u => dto(u).flatMap(Ok(_)))
 
-  private def putLink(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def putLink(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       body[TokenLinkReq](req) { r =>
         val token = r.token.trim
@@ -64,34 +57,21 @@ final class TokenLinks(
       }
     )
 
-  private def deleteLink(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def deleteLink(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u => links.delete(u.id) *> NoContent())
 
   type Res[A] = EitherT[IO, AppError, A]
 
-  def reject[A](
-    e: AppError
-  ): Res[A] = EitherT.leftT(e)
+  def reject[A](e: AppError): Res[A] = EitherT.leftT(e)
 
-  def run(
-    r: Res[Response[IO]]
-  ): IO[Response[IO]] = r.value.flatMap(_.fold(
-    fail,
-    IO.pure
-  ))
+  def run(r: Res[Response[IO]]): IO[Response[IO]] = r.value.flatMap(_.fold(fail, IO.pure))
 
   def available: Boolean = api.isDefined
 
   /** 連携の設定とトークン（なければ 409）. */
-  def linked(
-    u: User
-  ): Res[(TokenApi, String, TokenLink)] = linkedFor(u.id)
+  def linked(u: User): Res[(TokenApi, String, TokenLink)] = linkedFor(u.id)
 
-  def linkedFor(
-    userId: java.util.UUID
-  ): Res[(TokenApi, String, TokenLink)] =
+  def linkedFor(userId: java.util.UUID): Res[(TokenApi, String, TokenLink)] =
     api match {
       case None => reject(AppError(ErrorCode.LinkNotConfigured, s"$service との連携が設定されていません"))
       case Some(c) =>
@@ -108,24 +88,14 @@ final class TokenLinks(
     }
 
   /** 読み書きのトークン（参照のみなら 403. what は断るときの文言の「〜を」）. */
-  def writable(
-    u: User,
-    what: String
-  ): Res[(TokenApi, String)] =
-    linked(u).flatMap(
-      (
-        c,
-        t,
-        l
-      ) =>
-        if l.canWrite then EitherT.rightT((c, t))
-        else reject(AppError(ErrorCode.LinkTokenReadOnly, s"$service の API トークンが参照のみのため、${what}変えられません"))
+  def writable(u: User, what: String): Res[(TokenApi, String)] =
+    linked(u).flatMap((c, t, l) =>
+      if l.canWrite then EitherT.rightT((c, t))
+      else reject(AppError(ErrorCode.LinkTokenReadOnly, s"$service の API トークンが参照のみのため、${what}変えられません"))
     )
 
   /** 呼んだ結果を、こちらの応答のステータスにする（401 なら登録し直しを促す）. */
-  def result(
-    r: IO[Either[(Int, String), Json]]
-  ): Res[Json] =
+  def result(r: IO[Either[(Int, String), Json]]): Res[Json] =
     EitherT(r.map(_.left.map {
       case (401, _) => AppError(ErrorCode.LinkTokenRejected, s"$service の API トークンが使えません（失効・期限切れ）。設定の画面で登録し直してください")
       case (403, m) => AppError(ErrorCode.LinkForbidden, s"$service: $m")
@@ -133,20 +103,11 @@ final class TokenLinks(
       case (_, m) => AppError(ErrorCode.LinkBadGateway, s"$service: $m")
     }))
 
-  def call(
-    c: TokenApi,
-    token: String,
-    method: Method,
-    path: String,
-    body: Option[Json] = None
-  ): Res[Json] =
+  def call(c: TokenApi, token: String, method: Method, path: String, body: Option[Json] = None): Res[Json] =
     result(c.call(token, method, path, body))
 
   /** API トークンを確かめる: 持ち主の名前と、書けるか（参照のみのトークンは PATCH /api/me が 403）. */
-  private def verify(
-    c: TokenApi,
-    token: String
-  ): IO[Either[String, (String, Boolean)]] =
+  private def verify(c: TokenApi, token: String): IO[Either[String, (String, Boolean)]] =
     c.call(token, Method.GET, "/api/me").flatMap {
       case Left((401, _)) => IO.pure(Left(s"$service の API トークンが正しくないか、期限が切れています"))
       case Left((_, m)) => IO.pure(Left(s"$service: $m"))
@@ -156,9 +117,7 @@ final class TokenLinks(
         )
     }
 
-  def dto(
-    u: User
-  ): IO[TokenLinkDto] =
+  def dto(u: User): IO[TokenLinkDto] =
     links.get(u.id).map(l =>
       TokenLinkDto(api.isDefined, api.map(_.base), l.isDefined, l.map(_.account), l.map(_.prefix), l.exists(_.canWrite))
     )

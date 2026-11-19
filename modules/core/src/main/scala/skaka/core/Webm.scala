@@ -18,51 +18,32 @@ object Webm {
   private val ScaleId = 0x2ad7b1L
 
   /** 要素の id（先頭の印のビットを含む）と長さ. */
-  private def readId(
-    b: Array[Byte],
-    at: Int
-  ): Option[(Long, Int)] =
+  private def readId(b: Array[Byte], at: Int): Option[(Long, Int)] =
     if at >= b.length then None
     else {
       val first = b(at) & 0xff
       val len = Integer.numberOfLeadingZeros(first) - 23
       if len < 1 || len > 4 || at + len > b.length then None
       else
-        Some((0 until len).foldLeft(0L)(
-          (
-            v,
-            i
-          ) => (v << 8) | (b(at + i) & 0xff)
-        ) -> len)
+        Some((0 until len).foldLeft(0L)((v, i) => (v << 8) | (b(at + i) & 0xff)) -> len)
     }
 
   /** 要素の大きさ（印のビットを除く. すべて 1 は「不明」で None）と長さ. */
-  private def readSize(
-    b: Array[Byte],
-    at: Int
-  ): Option[(Option[Long], Int)] =
+  private def readSize(b: Array[Byte], at: Int): Option[(Option[Long], Int)] =
     if at >= b.length then None
     else {
       val first = b(at) & 0xff
       val len = Integer.numberOfLeadingZeros(first) - 23
       if len < 1 || len > 8 || at + len > b.length then None
       else {
-        val v = (1 until len).foldLeft((first & (0xff >> len)).toLong)(
-          (
-            v,
-            i
-          ) => (v << 8) | (b(at + i) & 0xff)
-        )
+        val v = (1 until len).foldLeft((first & (0xff >> len)).toLong)((v, i) => (v << 8) | (b(at + i) & 0xff))
         val unknown = v == (1L << (7 * len)) - 1
         Some((if unknown then None else Some(v)) -> len)
       }
     }
 
   /** 大きさを len バイトで書く（入らなければ None）. */
-  private def writeSize(
-    v: Long,
-    len: Int
-  ): Option[Array[Byte]] =
+  private def writeSize(v: Long, len: Int): Option[Array[Byte]] =
     if len < 1 || len > 8 || v >= (1L << (7 * len)) - 1 then None
     else
       Some(Array.tabulate(len)(i => ((v >>> (8 * (len - 1 - i))) & 0xff).toByte).updated(
@@ -71,31 +52,18 @@ object Webm {
       ))
 
   /** 大きさを、元と同じ長さ（入らなければ最小の長さ）で書く. */
-  private def resize(
-    v: Long,
-    len: Int
-  ): Array[Byte] =
+  private def resize(v: Long, len: Int): Array[Byte] =
     writeSize(v, len).orElse((1 to 8).iterator.flatMap(writeSize(v, _)).nextOption()).get
 
-  private def uint(
-    b: Array[Byte],
-    at: Int,
-    len: Int
-  ): Long = (0 until len).foldLeft(0L)(
-    (
-      v,
-      i
-    ) => (v << 8) | (b(at + i) & 0xff)
+  private def uint(b: Array[Byte], at: Int, len: Int): Long = (0 until len).foldLeft(0L)((v, i) =>
+    (v << 8) | (b(at + i) & 0xff)
   )
 
   /**
    * head（ファイルの先頭. Info を丸ごと含む長さ）に長さ（ミリ秒）を書いたもの. 直せない・直す必要がなければ None.
    * 返したものを head の代わりに使い、続きはそのままつなぐ.
    */
-  def withDuration(
-    head: Array[Byte],
-    ms: Double
-  ): Option[Array[Byte]] =
+  def withDuration(head: Array[Byte], ms: Double): Option[Array[Byte]] =
     if ms <= 0 then None
     else
       for {
@@ -110,18 +78,14 @@ object Webm {
       } yield out
 
   /** Segment の子を順に見て、Info に Duration を足す. */
-  private def patchSegment(
-    b: Array[Byte],
-    segSizeAt: Int,
-    segSize: Option[Long],
-    ssl: Int,
-    start: Int,
-    ms: Double
-  ): Option[Array[Byte]] = {
+  private def patchSegment(b: Array[Byte],
+                           segSizeAt: Int,
+                           segSize: Option[Long],
+                           ssl: Int,
+                           start: Int,
+                           ms: Double): Option[Array[Byte]] = {
     @annotation.tailrec
-    def loop(
-      at: Int
-    ): Option[Array[Byte]] =
+    def loop(at: Int): Option[Array[Byte]] =
       readId(b, at) match {
         case None => None
         case Some((id, il)) =>
@@ -138,33 +102,23 @@ object Webm {
     loop(start)
   }
 
-  private def patchInfo(
-    b: Array[Byte],
-    segSizeAt: Int,
-    segSize: Option[Long],
-    ssl: Int,
-    infoSizeAt: Int,
-    isl: Int,
-    dataAt: Int,
-    size: Int,
-    ms: Double
-  ): Option[Array[Byte]] = {
+  private def patchInfo(b: Array[Byte],
+                        segSizeAt: Int,
+                        segSize: Option[Long],
+                        ssl: Int,
+                        infoSizeAt: Int,
+                        isl: Int,
+                        dataAt: Int,
+                        size: Int,
+                        ms: Double): Option[Array[Byte]] = {
     // Info の子: 時間の単位（既定は 1ms = 1,000,000ns）と、既にある Duration
     @annotation.tailrec
-    def children(
-      at: Int,
-      acc: List[(Long, Int, Int)]
-    ): Option[List[(Long, Int, Int)]] = // (id, データの位置, 大きさ)
+    def children(at: Int, acc: List[(Long, Int, Int)]): Option[List[(Long, Int, Int)]] = // (id, データの位置, 大きさ)
       if at == dataAt + size then Some(acc.reverse)
       else
         (
           readId(b, at),
-          readId(b, at).flatMap(
-            (
-              _,
-              il
-            ) => readSize(b, at + il)
-          )
+          readId(b, at).flatMap((_, il) => readSize(b, at + il))
         ) match {
           case (Some((id, il)), Some((Some(s), sl))) if at + il + sl + s <= dataAt + size =>
             children(at + il + sl + s.toInt, (id, at + il + sl, s.toInt) :: acc)
@@ -191,11 +145,7 @@ object Webm {
     }
   }
 
-  extension [A](
-    a: A
-  ) {
-    private def tap(
-      f: A => Unit
-    ): A = { f(a); a }
+  extension [A](a: A) {
+    private def tap(f: A => Unit): A = { f(a); a }
   }
 }

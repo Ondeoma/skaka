@@ -7,20 +7,16 @@ import cats.effect.*
  * whisper.cpp の server（`--inference-path /v1/audio/transcriptions`）など）.
  * url は `http://whisper:8000/v1` のように /v1 まで. model はそのサーバーのモデルの名前. concurrency は同時に送る数.
  */
-final case class WhisperConfig(
-  url: String,
-  model: String,
-  language: String = "ja",
-  apiKey: Option[String] = None,
-  concurrency: Int = 2,
-  prompt: Option[String] = None)
+final case class WhisperConfig(url: String,
+                               model: String,
+                               language: String = "ja",
+                               apiKey: Option[String] = None,
+                               concurrency: Int = 2,
+                               prompt: Option[String] = None)
 
 /** 音声を文字にする（会議の文字起こし）. */
 trait SpeechToText {
-  def transcribe(
-    audio: Array[Byte],
-    mime: String
-  ): IO[Either[String, String]]
+  def transcribe(audio: Array[Byte], mime: String): IO[Either[String, String]]
 }
 
 /** 文字起こしの決まり（受け付ける音声・Whisper の空振りの文の除去）. */
@@ -50,14 +46,11 @@ object Transcriber {
     "thanksforwatching"
   ).map(norm)
 
-  private def norm(
-    s: String
-  ): String = s.toLowerCase.filterNot(c => c.isWhitespace || "、。，．,.!！?？・…「」『』()（）♪〜~ー-".contains(c))
+  private def norm(s: String): String =
+    s.toLowerCase.filterNot(c => c.isWhitespace || "、。，．,.!！?？・…「」『』()（）♪〜~ー-".contains(c))
 
   /** 文字起こしの結果を整える（空・空振りなら None）. */
-  def clean(
-    text: String
-  ): Option[String] = {
+  def clean(text: String): Option[String] = {
     val t = text.replaceAll("[\\s\\u3000]+", " ").trim
     val n = norm(t)
     Option.when(n.nonEmpty && !Hallucinations(n) && !n.forall(c => c == n.head))(t.take(2000))

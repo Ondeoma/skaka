@@ -22,50 +22,38 @@ import scala.util.Try
  * skawau（ファイル共有）の設定. url は画面から開く URL（許可の画面・録画のリンク）、internalUrl はこのサーバーから呼ぶ URL.
  * dir は録画中の一時ファイルを置くところ、maxBytes は1つの録画の上限.
  */
-final case class SkawauConfig(
-  url: String,
-  internalUrl: String,
-  clientId: String,
-  clientSecret: String,
-  dir: String,
-  maxBytes: Long)
+final case class SkawauConfig(url: String,
+                              internalUrl: String,
+                              clientId: String,
+                              clientSecret: String,
+                              dir: String,
+                              maxBytes: Long)
 
 /**
  * 録画. 録画する人の画面が会議の映像と音を1つにまとめて MediaRecorder で録り、数秒ごとの断片を順に送ってくる.
  * サーバーは一時ファイルに追記し、録り終えたら（画面が終えた・しばらく届かない）、録画した人の skawau に置いて参加者と共有する.
  * skawau のアップロードは1回で全体を送るため、録画中は一時ファイルにためる（途中で切れても、それまでの分は残る）.
  */
-final class Recorder private (
-  store: RecordingStore,
-  links: SkawauStore,
-  val files: SkawauFiles,
-  hub: Hub,
-  sup: Supervisor[IO],
-  active: Ref[IO, Map[UUID, Recorder.Active]],
-  notices: Notices) {
+final class Recorder private (store: RecordingStore,
+                              links: SkawauStore,
+                              val files: SkawauFiles,
+                              hub: Hub,
+                              sup: Supervisor[IO],
+                              active: Ref[IO, Map[UUID, Recorder.Active]],
+                              notices: Notices) {
   import Recorder.*
 
   val client: SkawauClient = files.client
 
-  private def file(
-    id: UUID
-  ): Path = Path(client.cfg.dir) / s"$id.part"
+  private def file(id: UUID): Path = Path(client.cfg.dir) / s"$id.part"
 
-  private def stamp(
-    at: Instant,
-    tz: String
-  ): String =
+  private def stamp(at: Instant, tz: String): String =
     DateTimeFormatter.ofPattern(
       "yyyy-MM-dd HH-mm"
     ).withZone(Try(ZoneId.of(tz)).getOrElse(ZoneId.of("Asia/Tokyo"))).format(at)
 
   /** 録画を始める（会議に主催者として入っている人だけ. 1つの会議室で同時に1つ）. */
-  def start(
-    u: User,
-    room: Room,
-    mime: String,
-    share: Boolean
-  ): IO[Either[AppError, Recording]] =
+  def start(u: User, room: Room, mime: String, share: Boolean): IO[Either[AppError, Recording]] =
     (hub.live(room.id), links.token(u.id)).tupled.flatMap {
       case (_, None) => IO.pure(Left(AppError(ErrorCode.SkawauNotLinked)))
       case (None, _) => IO.pure(Left(AppError(ErrorCode.MeetingNotOpen)))
@@ -82,13 +70,11 @@ final class Recorder private (
         )
     }
 
-  private def begin(
-    u: User,
-    room: Room,
-    l: skaka.core.Live,
-    mime: String,
-    share: Boolean
-  ): IO[Either[AppError, Recording]] =
+  private def begin(u: User,
+                    room: Room,
+                    l: skaka.core.Live,
+                    mime: String,
+                    share: Boolean): IO[Either[AppError, Recording]] =
     for {
       now <- IO.realTimeInstant
       rec = Recording(
@@ -115,12 +101,7 @@ final class Recorder private (
     } yield Right(rec)
 
   /** 断片を足す（seq は 0 から順に. 送り直しで同じものが来たら受け流す）. 返すのはここまでの大きさ. */
-  def append(
-    u: User,
-    id: UUID,
-    seq: Int,
-    data: Array[Byte]
-  ): IO[Either[AppError, Long]] =
+  def append(u: User, id: UUID, seq: Int, data: Array[Byte]): IO[Either[AppError, Long]] =
     active.get.map(_.get(id)).flatMap {
       case None => IO.pure(Left(AppError(ErrorCode.RecordingEnded)))
       case Some(a) if a.rec.userId != u.id => IO.pure(Left(AppError(ErrorCode.RecordingChunkOwnerOnly)))
@@ -146,11 +127,7 @@ final class Recorder private (
     }
 
   /** 録り終えた: skawau に置く（裏で. 画面は待たない）. */
-  def finish(
-    u: User,
-    id: UUID,
-    durationMs: Option[Long]
-  ): IO[Either[AppError, Unit]] =
+  def finish(u: User, id: UUID, durationMs: Option[Long]): IO[Either[AppError, Unit]] =
     active.get.map(_.get(id)).flatMap {
       case Some(a) if a.rec.userId != u.id => IO.pure(Left(AppError(ErrorCode.RecordingFinishOwnerOnly)))
       case Some(a) => a.lock.lock.surround(stop(id, durationMs)).as(Right(()))
@@ -163,10 +140,7 @@ final class Recorder private (
     }
 
   /** 保存できなかった録画を、もう一度 skawau に置く. */
-  def retry(
-    u: User,
-    id: UUID
-  ): IO[Either[AppError, Unit]] =
+  def retry(u: User, id: UUID): IO[Either[AppError, Unit]] =
     store.find(id).flatMap {
       case Some(r) if r.userId != u.id => IO.pure(Left(AppError(ErrorCode.RecordingOwnerOnly)))
       case Some(r) if r.status != RecordingStatus.Failed => IO.pure(Left(AppError(ErrorCode.RecordingNotFailed)))
@@ -180,9 +154,7 @@ final class Recorder private (
     }
 
   /** 録画を消す（録画中なら止めて捨てる. skawau に置いたファイルは skawau で消す）. */
-  def discard(
-    r: Recording
-  ): IO[Unit] = {
+  def discard(r: Recording): IO[Unit] = {
     val remove =
       active.modify(m => (m - r.id, m.get(r.id))).flatMap(_.traverse_(_ => hub.recording(r.roomId, None, r.id))) *>
         store.delete(r.id) *> Files[IO].deleteIfExists(file(r.id)).void
@@ -191,9 +163,7 @@ final class Recorder private (
   }
 
   /** 録画中のまま断片がしばらく届かない（画面を閉じた・回線が切れた）ものを終える. */
-  def sweep(
-    silent: FiniteDuration
-  ): IO[Unit] =
+  def sweep(silent: FiniteDuration): IO[Unit] =
     IO.realTimeInstant.flatMap { now =>
       active.get.flatMap(_.values.toList.filter(_.last.plusMillis(silent.toMillis).isBefore(now)).traverse_ { a =>
         a.lock.lock.surround(stop(a.rec.id, Some(now.toEpochMilli - a.rec.startedAt.toEpochMilli)))
@@ -211,10 +181,7 @@ final class Recorder private (
       }
     }).map(_.size)
 
-  private def stop(
-    id: UUID,
-    durationMs: Option[Long]
-  ): IO[Unit] =
+  private def stop(id: UUID, durationMs: Option[Long]): IO[Unit] =
     active.modify(m => (m - id, m.get(id))).flatMap {
       case None => IO.unit
       case Some(a) =>
@@ -223,13 +190,10 @@ final class Recorder private (
     }
 
   /** skawau に置き、参加者と共有する. 失敗したら一時ファイルを残す（もう一度保存できる）. 終わったら録画した人にプッシュ通知. */
-  private def save(
-    id: UUID
-  ): IO[Unit] = sbirds.observe.Telemetry.span("recording.save", "recording.id" -> id.toString)(saveImpl(id))
+  private def save(id: UUID): IO[Unit] =
+    sbirds.observe.Telemetry.span("recording.save", "recording.id" -> id.toString)(saveImpl(id))
 
-  private def saveImpl(
-    id: UUID
-  ): IO[Unit] =
+  private def saveImpl(id: UUID): IO[Unit] =
     store.find(id).flatMap {
       case None => Files[IO].deleteIfExists(file(id)).void
       case Some(r) =>
@@ -273,12 +237,7 @@ final class Recorder private (
 object Recorder {
 
   /** 録画中のもの（seq は次に受け取る断片の番号、last は最後に届いた時刻）. */
-  final case class Active(
-    rec: Recording,
-    seq: Int,
-    bytes: Long,
-    last: Instant,
-    lock: Mutex[IO])
+  final case class Active(rec: Recording, seq: Int, bytes: Long, last: Instant, lock: Mutex[IO])
 
   /** skawau の自分のルートの下に作るフォルダ（その下に月ごと）. */
   val Folder = "skaka 録画"
@@ -295,27 +254,20 @@ object Recorder {
   /** 受け付ける録画の形式（MediaRecorder の mimeType の ; より前）. */
   val Mimes: Set[String] = Set("video/webm", "video/mp4")
 
-  def baseMime(
-    mime: String
-  ): String = mime.takeWhile(_ != ';').trim.toLowerCase
+  def baseMime(mime: String): String = mime.takeWhile(_ != ';').trim.toLowerCase
 
   /** skawau に置くファイルの名前（会議室の名前から. パスの区切り・制御文字を除く）. */
-  def fileName(
-    title: String
-  ): String =
+  def fileName(title: String): String =
     title.map(c => if c == '/' then '／' else if c == '\\' then '＼' else c).filterNot(_.isControl).trim.stripPrefix(".")
 
-  def ext(
-    mime: String
-  ): String = if mime.contains("mp4") then ".mp4" else if mime.contains("ogg") then ".ogg" else ".webm"
+  def ext(mime: String): String =
+    if mime.contains("mp4") then ".mp4" else if mime.contains("ogg") then ".ogg" else ".webm"
 
-  def resource(
-    store: RecordingStore,
-    links: SkawauStore,
-    files: SkawauFiles,
-    hub: Hub,
-    notices: Notices = Notices.none
-  ): Resource[IO, Recorder] =
+  def resource(store: RecordingStore,
+               links: SkawauStore,
+               files: SkawauFiles,
+               hub: Hub,
+               notices: Notices = Notices.none): Resource[IO, Recorder] =
     for {
       sup <- Supervisor[IO](await = false)
       active <- Resource.eval(Ref.of[IO, Map[UUID, Active]](Map.empty))

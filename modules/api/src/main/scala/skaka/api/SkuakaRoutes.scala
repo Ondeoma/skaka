@@ -18,9 +18,7 @@ import java.util.UUID
 import scala.util.Try
 
 /** skuaka（カレンダー）との連携: API トークンの登録、予定の一覧、予定に会議室を付ける、会議の予定を立てる. */
-final class SkuakaRoutes(
-  d: ApiRoutes.Deps,
-  roomRoutes: RoomRoutes) extends RouteSupport {
+final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends RouteSupport {
   import d.{links, rooms, box, cfg}
   val sessions: SessionAuth = d.sessions
 
@@ -34,9 +32,7 @@ final class SkuakaRoutes(
     case req @ POST -> Root / "api" / "skuaka" / "schedule" => postSkuakaSchedule(req)
   }
 
-  private def getSkuakaEvents(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getSkuakaEvents(req: Request[IO]): IO[Response[IO]] =
     authed(req) { u =>
       val tz = param(req, "tz").filter(z => Try(ZoneId.of(z)).isSuccess).getOrElse(zone(u).getId)
       val from = date(param(req, "from")).getOrElse(LocalDate.now(ZoneId.of(tz)))
@@ -45,10 +41,7 @@ final class SkuakaRoutes(
       else run(upcoming(u, from, to, tz).semiflatMap(Ok(_)))
     }
 
-  private def postSkuakaEventRoom(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postSkuakaEventRoom(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(u =>
       sbirds.observe.Telemetry.span("skuaka.attach")(run(attach(
         u,
@@ -56,9 +49,7 @@ final class SkuakaRoutes(
       ).semiflatTap(_ => count("attached")).semiflatMap(Ok(_))))
     )
 
-  private def postSkuakaSchedule(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postSkuakaSchedule(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u =>
       body[ScheduleReq](req)(r =>
         sbirds.observe.Telemetry.span("skuaka.schedule")(run(schedule(u, r).semiflatTap(_ =>
@@ -67,28 +58,15 @@ final class SkuakaRoutes(
       )
     )
 
-  private def sk(
-    c: SkuakaClient,
-    token: String,
-    method: Method,
-    path: String,
-    body: Option[Json] = None
-  ): Res[Json] =
+  private def sk(c: SkuakaClient, token: String, method: Method, path: String, body: Option[Json] = None): Res[Json] =
     link.call(c, token, method, path, body)
 
-  private def enc(
-    s: String
-  ): String = java.net.URLEncoder.encode(s, "UTF-8")
+  private def enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
-  private def zone(
-    u: User
-  ): ZoneId = Try(ZoneId.of(u.timezone)).getOrElse(ZoneId.of("Asia/Tokyo"))
+  private def zone(u: User): ZoneId = Try(ZoneId.of(u.timezone)).getOrElse(ZoneId.of("Asia/Tokyo"))
 
   /** 予定に会議室を付ける: 場所に会議室の URL を入れる（場所があれば後ろに足す）. すでに付いていればその会議室. */
-  def attach(
-    u: User,
-    eventId: UUID
-  ): Res[RoomDto] =
+  def attach(u: User, eventId: UUID): Res[RoomDto] =
     for {
       ct <- writable(u, "予定を")
       (c, t) = ct
@@ -124,10 +102,7 @@ final class SkuakaRoutes(
     } yield room
 
   /** 会議の予定を立てる: 会議室を作り、skuaka の自分のメインのカレンダーに予定を作って招待する. */
-  def schedule(
-    u: User,
-    r: ScheduleReq
-  ): Res[ScheduleDto] =
+  def schedule(u: User, r: ScheduleReq): Res[ScheduleDto] =
     for {
       ct <- writable(u, "予定を")
       (c, t) = ct
@@ -192,12 +167,7 @@ final class SkuakaRoutes(
     )
 
   /** 期間の予定（自分の予定. 不参加と返事したもの・予定あり・なしだけ見えるものを除く）. room は会議室のコード. */
-  def upcoming(
-    u: User,
-    from: LocalDate,
-    to: LocalDate,
-    tz: String
-  ): Res[List[UpcomingDto]] =
+  def upcoming(u: User, from: LocalDate, to: LocalDate, tz: String): Res[List[UpcomingDto]] =
     for {
       ln <- linked(u)
       (c, t, _) = ln
@@ -210,12 +180,7 @@ final class SkuakaRoutes(
       ).map(_.toMap))
     } yield os.flatMap { o =>
       (o.get[UUID]("eventId"), o.get[String]("title"), o.get[String]("start"), o.get[String]("end")).mapN {
-        (
-          id,
-          title,
-          s,
-          e
-        ) =>
+        (id, title, s, e) =>
           {
             val loc = o.get[String]("location").getOrElse("")
             UpcomingDto(
@@ -235,12 +200,8 @@ final class SkuakaRoutes(
     }
 
   /** skuaka の予定に会議室を付けた・会議の予定を立てた数（メトリクス）. */
-  private def count(
-    action: String
-  ): IO[Unit] = sbirds.observe.Metrics.count("skaka.skuaka.events", "action" -> action)
+  private def count(action: String): IO[Unit] = sbirds.observe.Metrics.count("skaka.skuaka.events", "action" -> action)
 
-  private def date(
-    s: Option[String]
-  ): Option[LocalDate] = s.flatMap(x => Try(LocalDate.parse(x)).toOption)
+  private def date(s: Option[String]): Option[LocalDate] = s.flatMap(x => Try(LocalDate.parse(x)).toOption)
 
 }

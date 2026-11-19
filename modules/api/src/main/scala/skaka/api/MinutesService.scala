@@ -26,28 +26,22 @@ import scala.util.Try
  * 取り込んだら、頼んだ人の skawau に Markdown のファイルとして置き、会議に参加したメンバーと共有する（files. skawau を設定したときだけ）.
  * 取り込み直したら、同じファイルの中身を書き換える（skawau に版が残る）.
  */
-final class MinutesService private (
-  store: MinutesStore,
-  meetings: MeetingStore,
-  val link: TokenLinks,
-  cfg: SkakapoConfig,
-  sup: Supervisor[IO],
-  interval: FiniteDuration,
-  limit: FiniteDuration,
-  files: Option[SkawauFiles],
-  publicUrl: String) {
+final class MinutesService private (store: MinutesStore,
+                                    meetings: MeetingStore,
+                                    val link: TokenLinks,
+                                    cfg: SkakapoConfig,
+                                    sup: Supervisor[IO],
+                                    interval: FiniteDuration,
+                                    limit: FiniteDuration,
+                                    files: Option[SkawauFiles],
+                                    publicUrl: String) {
   import MinutesService.*
   import link.{Res, reject}
 
-  private def zone(
-    u: User
-  ): ZoneId = Try(ZoneId.of(u.timezone)).getOrElse(ZoneId.of("Asia/Tokyo"))
+  private def zone(u: User): ZoneId = Try(ZoneId.of(u.timezone)).getOrElse(ZoneId.of("Asia/Tokyo"))
 
   /** 議事録を頼む（会議を見られる人なら誰でも. 頼んだ人の skakapo の会話になる）. */
-  def start(
-    u: User,
-    meetingId: UUID
-  ): IO[Either[AppError, MinutesDto]] =
+  def start(u: User, meetingId: UUID): IO[Either[AppError, MinutesDto]] =
     (for {
       d <- EitherT.fromOptionF(meetings.detail(u.id, meetingId), AppError(ErrorCode.MeetingNotFound))
       _ <- if d.transcript.isEmpty && d.chat.isEmpty then reject[Unit](AppError(ErrorCode.MinutesNoContent))
@@ -97,11 +91,7 @@ final class MinutesService private (
     } yield m.dto(u.id, u.name)).value
 
   /** 会議の記録を skakapo に添付する（ID を返す）. */
-  private def upload(
-    c: TokenApi,
-    token: String,
-    text: String
-  ): Res[UUID] =
+  private def upload(c: TokenApi, token: String, text: String): Res[UUID] =
     EitherT.fromEither[IO](c.uri("/api/attachments?name=" +
       java.net.URLEncoder.encode(AttachmentName, "UTF-8")).left.map(AppError(ErrorCode.MinutesAttachmentUrlInvalid, _)))
       .flatMap { u =>
@@ -114,10 +104,7 @@ final class MinutesService private (
       )
 
   /** skakapo の返事を、もう一度取り込む（skakapo の会話で直してもらったあと. 頼んだ人だけ）. */
-  def refresh(
-    u: User,
-    id: UUID
-  ): IO[Either[AppError, Unit]] =
+  def refresh(u: User, id: UUID): IO[Either[AppError, Unit]] =
     store.find(id).flatMap {
       case None => IO.pure(Left(AppError(ErrorCode.MinutesNotFound)))
       case Some(m) if m.userId != u.id => IO.pure(Left(AppError(ErrorCode.MinutesRefreshRequesterOnly)))
@@ -139,10 +126,7 @@ final class MinutesService private (
         }
     }
 
-  def delete(
-    u: User,
-    id: UUID
-  ): IO[Either[AppError, Unit]] =
+  def delete(u: User, id: UUID): IO[Either[AppError, Unit]] =
     store.find(id).flatMap {
       case None => IO.pure(Left(AppError(ErrorCode.MinutesNotFound)))
       case Some(m) if m.userId != u.id => IO.pure(Left(AppError(ErrorCode.MinutesDeleteRequesterOnly)))
@@ -150,32 +134,18 @@ final class MinutesService private (
     }
 
   /** 進み具合: 会話の状態（Busy・Idle・Failed）、読んだ最後の出来事、いちばん新しい返事、失敗の文言. */
-  private final case class Progress(
-    state: Int,
-    after: Long,
-    text: Option[String],
-    error: Option[String])
+  private final case class Progress(state: Int, after: Long, text: Option[String], error: Option[String])
 
   /** skakapo の会話の出来事を読む（wait 秒まで、新しい出来事を待つ）. */
-  private def read(
-    m: Minutes,
-    after: Long,
-    wait: Int
-  ): EitherT[IO, (Int, String), Progress] =
+  private def read(m: Minutes, after: Long, wait: Int): EitherT[IO, (Int, String), Progress] =
     EitherT(link.linkedFor(m.userId).value.map(_.left.map(e => 0 -> e.message))).flatMap {
-      (
-        c,
-        token,
-        _
-      ) =>
+      (c, token, _) =>
         EitherT(c.call(token, Method.GET, s"/api/sessions/${m.sessionId}/events?after=$after&wait=$wait")).map { j =>
           val c0 = j.hcursor
           val status = c0.downField("session").get[String]("status").getOrElse("")
           val events = c0.downField("events").as[List[Json]].getOrElse(Nil).map(_.hcursor)
           val last = events.flatMap(_.get[Long]("id").toOption).maxOption.getOrElse(after)
-          def texts(
-            kind: String
-          ) = events.filter(
+          def texts(kind: String) = events.filter(
             _.get[String]("kind").toOption.contains(kind)
           ).flatMap(_.downField("data").get[String]("text").toOption)
           val state = status match {
@@ -193,14 +163,8 @@ final class MinutesService private (
     }
 
   /** 返事が出るまで待って取り込む（limit を過ぎたら、取り込み直しを促して終える）. */
-  private def follow(
-    m: Minutes
-  ): IO[Unit] = {
-    def loop(
-      after: Long,
-      text: Option[String],
-      deadline: Long
-    ): IO[Unit] =
+  private def follow(m: Minutes): IO[Unit] = {
+    def loop(after: Long, text: Option[String], deadline: Long): IO[Unit] =
       read(m, after, interval.toSeconds.toInt.min(25)).value.flatMap {
         case Left((401, _)) =>
           store.update(m.id, MinutesStatus.Failed, None, Some("skakapo の API トークンが使えません。設定の画面で登録し直してください"))
@@ -233,10 +197,7 @@ final class MinutesService private (
   }
 
   /** skawau に置く（もう一度置くときも. 頼んだ人だけ）. */
-  def saveFile(
-    u: User,
-    id: UUID
-  ): IO[Either[AppError, Unit]] =
+  def saveFile(u: User, id: UUID): IO[Either[AppError, Unit]] =
     store.find(id).flatMap {
       case None => IO.pure(Left(AppError(ErrorCode.MinutesNotFound)))
       case Some(m) if m.userId != u.id => IO.pure(Left(AppError(ErrorCode.MinutesSaveRequesterOnly)))
@@ -246,9 +207,7 @@ final class MinutesService private (
     }
 
   /** skawau に置くファイルの中身（議事録と、会議の記録・skakapo の会話への案内）. */
-  private def document(
-    m: Minutes
-  ): String =
+  private def document(m: Minutes): String =
     s"""# 議事録: ${m.title}
        |
        |${m.body.trim}
@@ -262,9 +221,7 @@ final class MinutesService private (
    * 取り込んだ議事録を skawau に置く. 置いたことがあれば中身を書き換え（消されていたら置き直す）、初めて置いたときは会議に参加したメンバーと共有する.
    * 置けなかったら理由を残す（「skawau に保存」でもう一度置ける）.
    */
-  private def file(
-    id: UUID
-  ): IO[Unit] = files.fold(IO.unit) { f =>
+  private def file(id: UUID): IO[Unit] = files.fold(IO.unit) { f =>
     store.find(id).flatMap {
       case Some(m) if m.body.nonEmpty =>
         val data = document(m).getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -297,10 +254,7 @@ final class MinutesService private (
   /** skakapo の画面の URL. */
   def url: String = cfg.url
 
-  def forMeeting(
-    viewer: UUID,
-    meetingId: UUID
-  ): IO[List[MinutesDto]] = store.forMeeting(viewer, meetingId)
+  def forMeeting(viewer: UUID, meetingId: UUID): IO[List[MinutesDto]] = store.forMeeting(viewer, meetingId)
 
   /** 起動したとき: 前に動いていたときに待っていたものの続きを見る. */
   def recover: IO[Int] = store.running.flatMap(_.traverse(m => sup.supervise(follow(m)))).map(_.size)
@@ -318,9 +272,7 @@ object MinutesService {
   val Mime = "text/markdown"
 
   /** skakapo のエージェントへの頼み方（依頼の「内容」）. */
-  def instructions(
-    title: String
-  ): String =
+  def instructions(title: String): String =
     s"""添付の「$AttachmentName」は、Web 会議（skaka）「$title」の記録です（参加者・音声の文字起こし・チャット）。
        |これをもとに、日本語で議事録と要約を作ってください。
        |
@@ -338,16 +290,14 @@ object MinutesService {
        |## 次回までに確かめること""".stripMargin
 
   /** files は skawau に置くとき（skawau を設定したときだけ）、publicUrl は skaka の URL（ファイルに会議の記録への案内を書く）. */
-  def resource(
-    store: MinutesStore,
-    meetings: MeetingStore,
-    link: TokenLinks,
-    cfg: SkakapoConfig,
-    files: Option[SkawauFiles],
-    publicUrl: String,
-    interval: FiniteDuration = 3.seconds,
-    limit: FiniteDuration = 60.minutes
-  ): Resource[IO, MinutesService] =
+  def resource(store: MinutesStore,
+               meetings: MeetingStore,
+               link: TokenLinks,
+               cfg: SkakapoConfig,
+               files: Option[SkawauFiles],
+               publicUrl: String,
+               interval: FiniteDuration = 3.seconds,
+               limit: FiniteDuration = 60.minutes): Resource[IO, MinutesService] =
     for {
       sup <- Supervisor[IO](await = false)
       svc = new MinutesService(store, meetings, link, cfg, sup, interval, limit, files, publicUrl)

@@ -13,11 +13,7 @@ class CoreSpec extends munit.FunSuite {
   private val now = Instant.parse("2026-11-15T01:00:00Z")
   private def fresh = { var n = 0L; () => { n += 1; new UUID(0, n) } }
 
-  private def peer(
-    id: String,
-    user: Option[UUID],
-    guest: Boolean = false
-  ) =
+  private def peer(id: String, user: Option[UUID], guest: Boolean = false) =
     PeerInfo(
       id,
       user,
@@ -29,17 +25,10 @@ class CoreSpec extends munit.FunSuite {
       now.toString
     )
 
-  private def sent(
-    fx: List[Effect],
-    to: String
-  ): List[ServerMsg] = fx.collect { case Effect.Send(`to`, m) => m }
+  private def sent(fx: List[Effect], to: String): List[ServerMsg] = fx.collect { case Effect.Send(`to`, m) => m }
 
   /** 何人かを入れた状態. */
-  private def withPeers(
-    lobby: Boolean = false
-  )(
-    ps: PeerInfo*
-  ): (Live, List[Effect]) = {
+  private def withPeers(lobby: Boolean = false)(ps: PeerInfo*): (Live, List[Effect]) = {
     val f = fresh
     ps.foldLeft((Live(UUID.randomUUID(), owner, lobby), List.empty[Effect])) {
       case ((l, fx), p) => {
@@ -75,12 +64,7 @@ class CoreSpec extends munit.FunSuite {
     assert(sent(fx4, "c").exists { case w: ServerMsg.Welcome => w.transcribing.isDefined; case _ => false })
     // 出ていった人の音声は配らない. 全員が出たら止まる
     assertEquals(Conference.caption(l3, line.copy(peer = "x"), now)._2, Nil)
-    val l4 = List("a", "b", "c").foldLeft(l3)(
-      (
-        l,
-        id
-      ) => Conference.leave(l, id, now)._1
-    )
+    val l4 = List("a", "b", "c").foldLeft(l3)((l, id) => Conference.leave(l, id, now)._1)
     assertEquals(l4.transcribing, None)
     assertEquals(Conference.handle(l2, "a", ClientMsg.Transcribe(false), now, f)._1.transcribing, None)
   }

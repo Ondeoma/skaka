@@ -8,14 +8,8 @@ import io.github.ondeoma.scalactive.components.ComponentManager.*
  */
 object Quality {
 
-  private def int(
-    key: String,
-    default: Int
-  ): Int = Prefs.get(key, default.toString).toIntOption.getOrElse(default)
-  private def bool(
-    key: String,
-    default: Boolean
-  ): Boolean = Prefs.get(key, default.toString) == "true"
+  private def int(key: String, default: Int): Int = Prefs.get(key, default.toString).toIntOption.getOrElse(default)
+  private def bool(key: String, default: Boolean): Boolean = Prefs.get(key, default.toString) == "true"
 
   /** カメラの解像度（縦の画素数）・フレームレート. */
   val resolution: RV[Int] = RV(int("q.res", 720))
@@ -40,29 +34,18 @@ object Quality {
   val screenModes: List[(String, String)] = List("detail" -> "文字をくっきり（資料・コード）", "motion" -> "動きをなめらかに（動画）")
 
   /** 設定を変える. kind は反映するもの（video / audio / screen / bitrate）. */
-  def setInt(
-    rv: RV[Int],
-    key: String,
-    v: Int,
-    kind: String
-  ): Unit = { rv := v; Prefs.set(key, v.toString); Meeting.applyQuality(kind) }
-  def setStr(
-    rv: RV[String],
-    key: String,
-    v: String,
-    kind: String
-  ): Unit = { rv := v; Prefs.set(key, v); Meeting.applyQuality(kind) }
-  def setBool(
-    rv: RV[Boolean],
-    key: String,
-    v: Boolean,
-    kind: String
-  ): Unit = { rv := v; Prefs.set(key, v.toString); Meeting.applyQuality(kind) }
+  def setInt(rv: RV[Int], key: String, v: Int, kind: String): Unit = {
+    rv := v; Prefs.set(key, v.toString); Meeting.applyQuality(kind)
+  }
+  def setStr(rv: RV[String], key: String, v: String, kind: String): Unit = {
+    rv := v; Prefs.set(key, v); Meeting.applyQuality(kind)
+  }
+  def setBool(rv: RV[Boolean], key: String, v: Boolean, kind: String): Unit = {
+    rv := v; Prefs.set(key, v.toString); Meeting.applyQuality(kind)
+  }
 
   /** カメラの映像の上限（bps）. 解像度ごとの基準に、相手の人数（送る本数）と画質の設定を掛ける. */
-  def videoBitrate(
-    peers: Int
-  ): Int = {
+  def videoBitrate(peers: Int): Int = {
     val base = resolution.v match {
       case r if r <= 360 => 500
       case r if r <= 540 => 900

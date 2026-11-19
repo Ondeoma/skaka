@@ -20,17 +20,16 @@ import skaka.core.ErrorCode
 
 import scala.concurrent.duration.*
 
-final case class AppConfig(
-  port: Int,
-  db: DbConfig,
-  oidc: Option[OidcConfig],
-  api: ApiConfig,
-  staticDir: Option[String],
-  skuakaUrl: Option[String],
-  secretKey: Option[String],
-  skawau: Option[SkawauConfig],
-  whisper: Option[WhisperConfig] = None,
-  skakapo: Option[SkakapoConfig] = None)
+final case class AppConfig(port: Int,
+                           db: DbConfig,
+                           oidc: Option[OidcConfig],
+                           api: ApiConfig,
+                           staticDir: Option[String],
+                           skuakaUrl: Option[String],
+                           secretKey: Option[String],
+                           skawau: Option[SkawauConfig],
+                           whisper: Option[WhisperConfig] = None,
+                           skakapo: Option[SkakapoConfig] = None)
 
 object Main extends IOApp.Simple {
 
@@ -156,10 +155,7 @@ object Main extends IOApp.Simple {
     } yield ()
 
   /** DB が使えるまで待ってからマイグレーションする. */
-  private def migrateWithRetry(
-    cfg: AppConfig,
-    attempt: Int = 1
-  ): IO[Int] =
+  private def migrateWithRetry(cfg: AppConfig, attempt: Int = 1): IO[Int] =
     Database.migrate(cfg.db).handleErrorWith { e =>
       if attempt >= 60 then IO.raiseError(e)
       else
@@ -168,12 +164,8 @@ object Main extends IOApp.Simple {
     }
 
   /** DB から定期的に読むメトリクス（skorimako のダッシュボード・アラート用）. */
-  private def gauges(
-    xa: doobie.Transactor[IO]
-  ): Resource[IO, Unit] = {
-    def q(
-      sqlText: doobie.Fragment
-    ): IO[Long] = sqlText.query[Long].unique.transact(xa)
+  private def gauges(xa: doobie.Transactor[IO]): Resource[IO, Unit] = {
+    def q(sqlText: doobie.Fragment): IO[Long] = sqlText.query[Long].unique.transact(xa)
     List(
       Metrics.gauge("skaka.users.total", "有効なユーザーの数")(q(sql"select count(*) from app_user where not disabled")),
       Metrics.gauge(
@@ -201,18 +193,14 @@ object Main extends IOApp.Simple {
   }
 
   /** 会議中の数（このノードのメモリ上. 15秒ごと）: 会議中の会議室・会議に入っている人・待機室の人. */
-  private def hubGauges(
-    hub: Hub
-  ): Resource[IO, Unit] =
+  private def hubGauges(hub: Hub): Resource[IO, Unit] =
     List(
       Metrics.gauge("skaka.rooms.open", "会議中の会議室の数", 15.seconds)(hub.stats.map(_._1)),
       Metrics.gauge("skaka.participants.current", "会議に入っている人の数", 15.seconds)(hub.stats.map(_._2)),
       Metrics.gauge("skaka.lobby.waiting", "待機室で待っている人の数", 15.seconds)(hub.stats.map(_._3))
     ).sequence_
 
-  private def healthRoutes(
-    xa: doobie.Transactor[IO]
-  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
+  private def healthRoutes(xa: doobie.Transactor[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / "healthz" =>
       sql"select 1".query[Int].unique.transact(xa).timeout(3.seconds).attempt.flatMap {
         case Right(_) => IO.pure(TextResponse(Status.Ok, "ok"))
@@ -224,15 +212,11 @@ object Main extends IOApp.Simple {
   }
 
   /** 期限の切れたセッション・ログイン途中の状態を消す（1時間ごと）. */
-  private def purgeLoop(
-    users: UserStore
-  ): IO[Unit] =
+  private def purgeLoop(users: UserStore): IO[Unit] =
     Periodic.run(1.minute, 1.hour, ErrorCode.PurgeFailed)(IO.realTimeInstant.flatMap(users.purgeExpired)).void
 
   /** ビルド済みの画面の配信. 存在しないパスは index.html（SPA）. */
-  private def spa(
-    dir: String
-  ): HttpRoutes[IO] = {
+  private def spa(dir: String): HttpRoutes[IO] = {
     val files = fileService[IO](FileService.Config(dir))
     val index = HttpRoutes.of[IO] {
       case req @ GET -> path

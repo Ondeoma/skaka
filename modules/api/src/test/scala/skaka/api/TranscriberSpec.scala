@@ -25,9 +25,7 @@ class WhisperClientSpec extends munit.CatsEffectSuite {
       case req @ POST -> Root / "v1" / "audio" / "transcriptions" =>
         val len = req.contentLength
         req.as[Multipart[IO]].flatMap { mp =>
-          def field(
-            n: String
-          ) = mp.parts.find(_.name.contains(n)).fold(IO.pure(""))(_.bodyText.compile.string)
+          def field(n: String) = mp.parts.find(_.name.contains(n)).fold(IO.pure(""))(_.bodyText.compile.string)
           for {
             model <- field("model")
             lang <- field("language")

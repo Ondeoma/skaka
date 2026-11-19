@@ -9,28 +9,25 @@ import skaka.db.*
 object ApiRoutes {
 
   /** recorder は skawau（録画の保存先）、stt は Whisper（文字起こし）、minutes は skakapo（議事録）を設定したときだけ. */
-  final case class Deps(
-    oidc: Option[sbirds.auth.OidcClient],
-    users: UserStore,
-    rooms: RoomStore,
-    meetings: MeetingStore,
-    links: LinkStore,
-    hub: Hub,
-    skuaka: Option[SkuakaClient],
-    box: skaka.auth.SecretBox,
-    sessions: SessionAuth,
-    cfg: ApiConfig,
-    recordings: RecordingStore,
-    skawauLinks: SkawauStore,
-    oauth: OAuthStore,
-    recorder: Option[Recorder] = None,
-    stt: Option[SpeechToText] = None,
-    minutes: Option[MinutesService] = None)
+  final case class Deps(oidc: Option[sbirds.auth.OidcClient],
+                        users: UserStore,
+                        rooms: RoomStore,
+                        meetings: MeetingStore,
+                        links: LinkStore,
+                        hub: Hub,
+                        skuaka: Option[SkuakaClient],
+                        box: skaka.auth.SecretBox,
+                        sessions: SessionAuth,
+                        cfg: ApiConfig,
+                        recordings: RecordingStore,
+                        skawauLinks: SkawauStore,
+                        oauth: OAuthStore,
+                        recorder: Option[Recorder] = None,
+                        stt: Option[SpeechToText] = None,
+                        minutes: Option[MinutesService] = None)
 
   /** REST API と MCP（WebSocket は SignalRoutes）. */
-  def apply(
-    d: Deps
-  ): HttpRoutes[IO] = {
+  def apply(d: Deps): HttpRoutes[IO] = {
     val rooms = new RoomRoutes(d)
     val rest = new AuthRoutes(d).routes <+> rooms.routes <+> new SkuakaRoutes(d, rooms).routes <+>
       new SkawauRoutes(d).routes <+>

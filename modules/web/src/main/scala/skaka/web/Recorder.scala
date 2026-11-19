@@ -63,9 +63,7 @@ object Recorder {
   // ---------------------------------------------------------------- 始める・終える
 
   /** 録画を始める（サーバーに知らせてから録り始める）. */
-  def start(
-    share: Boolean = true
-  ): Unit =
+  def start(share: Boolean = true): Unit =
     if (!supported) Store.toast("このブラウザは録画に対応していません（Chrome・Edge・Firefox・Safari の新しい版を使ってください）", error = true)
     else if (rec.isEmpty && !finishing.v) mimeType match {
       case None => Store.toast("このブラウザで使える録画の形式がありません", error = true)
@@ -88,10 +86,7 @@ object Recorder {
     if (m.state.asInstanceOf[String] != "inactive") m.stop() // 最後の断片（ondataavailable）のあとで onstop
   }
 
-  private def begin(
-    id: UUID,
-    mime: String
-  ): Unit = {
+  private def begin(id: UUID, mime: String): Unit = {
     val c = dom.document.createElement("canvas").asInstanceOf[dom.HTMLCanvasElement]
     c.width = W
     c.height = H
@@ -136,16 +131,10 @@ object Recorder {
     (e: dom.BeforeUnloadEvent) => if (mine.v) e.preventDefault()
 
   /** 断片を順に送る（失敗したら少し待って送り直す. 録画が終わっている・上限を超えたなどは止める）. */
-  private def enqueue(
-    id: UUID,
-    blob: dom.Blob
-  ): Unit = {
+  private def enqueue(id: UUID, blob: dom.Blob): Unit = {
     val n = seq
     seq += 1
-    def attempt(
-      left: Int,
-      wait: Int
-    ): Future[Unit] =
+    def attempt(left: Int, wait: Int): Future[Unit] =
       Api.putChunk(id, n, blob).recoverWith {
         case ApiError(code, _) if (code == 0 || code >= 500) && left > 0 =>
           val p = scala.concurrent.Promise[Unit]()
@@ -159,9 +148,7 @@ object Recorder {
     }
   }
 
-  private def finish(
-    id: UUID
-  ): Unit = {
+  private def finish(id: UUID): Unit = {
     val duration = (js.Date.now() - startedAt).toLong
     release()
     finishing := true
@@ -211,16 +198,8 @@ object Recorder {
         s.getAudioTracks().asInstanceOf[js.Array[js.Dynamic]].toList
       ).filter(_.readyState.asInstanceOf[String] == "live")
       val ids = tracks.map(_.id.asInstanceOf[String]).toSet
-      sources.filterNot(
-        (
-          k,
-          _
-        ) => ids(k)
-      ).foreach {
-        (
-          k,
-          s
-        ) => Try(s.disconnect()); sources -= k
+      sources.filterNot((k, _) => ids(k)).foreach {
+        (k, s) => Try(s.disconnect()); sources -= k
       }
       tracks.filterNot(t => sources.contains(t.id.asInstanceOf[String])).foreach { t =>
         Try {
@@ -233,15 +212,11 @@ object Recorder {
   }
 
   /** 枠の映像（なければ None）. */
-  private def streamOf(
-    t: Tile
-  ): Option[js.Dynamic] =
+  private def streamOf(t: Tile): Option[js.Dynamic] =
     if (t.key == "self") Meeting.local
     else if (t.screen && t.peer == "self") Meeting.screen else Meeting.streamOf(t.peer, t.screen)
 
-  private def videoOf(
-    s: js.Dynamic
-  ): Option[dom.HTMLVideoElement] =
+  private def videoOf(s: js.Dynamic): Option[dom.HTMLVideoElement] =
     if (s.getVideoTracks().asInstanceOf[js.Array[js.Dynamic]].forall(_.readyState.asInstanceOf[String] != "live")) None
     else {
       val id = s.id.asInstanceOf[String]
@@ -260,9 +235,7 @@ object Recorder {
       Option.when(v.videoWidth > 0)(v)
     }
 
-  private def label(
-    t: Tile
-  ): String =
+  private def label(t: Tile): String =
     if (t.peer == "self") Meeting.self.v.map(_.name).getOrElse("あなた") + (if (t.screen) " の画面" else "")
     else Meeting.peers.v.find(_.id == t.peer).map(_.name).getOrElse("") + (if (t.screen) " の画面" else "")
 
@@ -283,10 +256,7 @@ object Recorder {
         val side = if (people.isEmpty) 0 else 260
         cell(g, sh, 8, 8, W - side - 16, H - 16, contain = true)
         people.zipWithIndex.foreach {
-          (
-            t,
-            i
-          ) =>
+          (t, i) =>
             val h = (H - 8 * (people.size + 1)) / people.size.max(1) min 170
             cell(g, t, W - side, 8 + i * (h + 8), side - 8, h, contain = false)
         }
@@ -302,24 +272,13 @@ object Recorder {
         val x0 = (W - cols * cw - (cols - 1) * 8) / 2
         val y0 = (H - rows * ch - (rows - 1) * 8) / 2
         all.take(16).zipWithIndex.foreach {
-          (
-            t,
-            i
-          ) => cell(g, t, x0 + (i % cols) * (cw + 8), y0 + (i / cols) * (ch + 8), cw, ch, contain = false)
+          (t, i) => cell(g, t, x0 + (i % cols) * (cw + 8), y0 + (i / cols) * (ch + 8), cw, ch, contain = false)
         }
     }
   }
 
   /** 1つの枠: 映像（なければ名前の頭文字）と名前. 話している人は枠を光らせる. */
-  private def cell(
-    g: js.Dynamic,
-    t: Tile,
-    x: Int,
-    y: Int,
-    w: Int,
-    h: Int,
-    contain: Boolean
-  ): Unit = {
+  private def cell(g: js.Dynamic, t: Tile, x: Int, y: Int, w: Int, h: Int, contain: Boolean): Unit = {
     g.fillStyle = "#1e293b"
     g.fillRect(x, y, w, h)
     streamOf(t).flatMap(videoOf) match {

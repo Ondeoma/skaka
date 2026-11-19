@@ -11,11 +11,7 @@ import org.http4s.headers.Authorization
  * 接続できなければ 502.
  */
 object RemoteJson {
-  def run(
-    http: Client[IO],
-    req: Request[IO],
-    service: String
-  ): IO[Either[(Int, String), Json]] =
+  def run(http: Client[IO], req: Request[IO], service: String): IO[Either[(Int, String), Json]] =
     http.run(req).use { r =>
       r.bodyText.compile.string.map { s =>
         val j = if s.isEmpty then Json.Null else io.circe.parser.parse(s).getOrElse(Json.fromString(s.take(300)))
@@ -24,7 +20,5 @@ object RemoteJson {
       }
     }.handleError(e => Left(502 -> s"$service に接続できません: ${e.getMessage}"))
 
-  def bearer(
-    token: String
-  ): Authorization = Authorization(Credentials.Token(AuthScheme.Bearer, token))
+  def bearer(token: String): Authorization = Authorization(Credentials.Token(AuthScheme.Bearer, token))
 }

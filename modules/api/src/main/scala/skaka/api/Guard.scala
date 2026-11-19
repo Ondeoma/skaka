@@ -14,9 +14,7 @@ import skaka.core.ErrorCode
 object Guard {
   val MaxBody: Long = 1024 * 1024
 
-  private def limitOf(
-    req: Request[IO]
-  ): Long = req.pathInfo.segments.map(_.decoded()).toList match {
+  private def limitOf(req: Request[IO]): Long = req.pathInfo.segments.map(_.decoded()).toList match {
     case "api" :: "recordings" :: _ :: "chunks" :: _ :: Nil => Recorder.MaxChunk.toLong
     case "api" :: "speech" :: _ :: Nil => Transcriber.MaxBytes.toLong
     case _ => MaxBody
@@ -48,37 +46,25 @@ object Guard {
     ).mkString("; ")
   }
 
-  def apply(
-    routes: HttpRoutes[IO]
-  ): HttpRoutes[IO] = cats.data.Kleisli { (req: Request[IO]) =>
+  def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = cats.data.Kleisli { (req: Request[IO]) =>
     val limit = limitOf(req)
     if req.contentLength.exists(_ > limit) then
       cats.data.OptionT.liftF(Errors.respond(ErrorCode.RequestTooLarge))
     else {
       // Content-Length がなく（chunked で）送られても、上限を超えたところで止める
       val body = req.body.chunks.evalMapAccumulate(0L) {
-        (
-          n,
-          c
-        ) =>
+        (n, c) =>
           {
             val m = n + c.size
             if m > limit then IO.raiseError(AppError(ErrorCode.RequestTooLarge)) else IO.pure(m -> c)
           }
-      }.flatMap(
-        (
-          _,
-          c
-        ) => fs2.Stream.chunk(c)
-      )
+      }.flatMap((_, c) => fs2.Stream.chunk(c))
       routes(req.withBodyStream(body)).map(secure)
     }
   }
 
   /** どの応答にも付けるヘッダー（HTML には CSP も. 個別に付けたものはそのまま）. */
-  def secure(
-    r: Response[IO]
-  ): Response[IO] = {
+  def secure(r: Response[IO]): Response[IO] = {
     val html = r.contentType.exists(_.mediaType == MediaType.text.html)
     val base = r.putHeaders("X-Content-Type-Options" -> "nosniff", "Referrer-Policy" -> "same-origin")
     if !html then base

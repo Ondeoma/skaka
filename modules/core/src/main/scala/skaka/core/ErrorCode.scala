@@ -6,10 +6,7 @@ package skaka.core
  * 4xxx: 文字起こし・議事録, 5xxx: 兄弟のサービスとの連携（skuaka・skawau・skakapo）, 6xxx: プッシュ通知,
  * 9xxx: サーバー内部・バックグラウンドの処理.
  */
-enum ErrorCode(
-  val code: String,
-  val status: Int,
-  val message: String) extends sbirds.shared.ErrorCode {
+enum ErrorCode(val code: String, val status: Int, val message: String) extends sbirds.shared.ErrorCode {
   case OidcNotConfigured extends ErrorCode("SKAKA-1001", 503, "OIDC が設定されていません")
   case LoginCodeStateRequired extends ErrorCode("SKAKA-1002", 400, "code と state が必要です")
   case LoginExpired extends ErrorCode("SKAKA-1003", 400, "ログインの有効期限が切れました。もう一度ログインしてください")

@@ -47,14 +47,13 @@ class FlowSpec extends munit.CatsEffectSuite {
     ))
   )
 
-  final case class App(
-    idp: HttpApp[IO],
-    app: HttpApp[IO],
-    hub: Hub,
-    skuaka: FakeSkuaka,
-    skawau: FakeSkawau,
-    recorder: Recorder,
-    skakapo: FakeSkakapo)
+  final case class App(idp: HttpApp[IO],
+                       app: HttpApp[IO],
+                       hub: Hub,
+                       skuaka: FakeSkuaka,
+                       skawau: FakeSkawau,
+                       recorder: Recorder,
+                       skakapo: FakeSkakapo)
 
   /** IdP・偽の skuaka・アプリ（ルート）を用意する. DB はまっさらにする. */
   private val fixture = ResourceSuiteLocalFixture(
@@ -153,15 +152,11 @@ class FlowSpec extends munit.CatsEffectSuite {
 
   override def munitFixtures = List(fixture)
 
-  private def location(
-    r: Response[IO]
-  ): Uri = r.headers.get[Location].map(_.uri).getOrElse(fail(s"no Location (${r.status})"))
+  private def location(r: Response[IO]): Uri =
+    r.headers.get[Location].map(_.uri).getOrElse(fail(s"no Location (${r.status})"))
 
   /** IdP でログインして、セッションの Cookie を受け取る. */
-  private def login(
-    name: String,
-    email: String
-  ): IO[String] = {
+  private def login(name: String, email: String): IO[String] = {
     val f = fixture()
     for {
       r1 <- f.app.run(Request[IO](Method.GET, uri"/auth/login?returnTo=/r/abc"))
@@ -180,12 +175,7 @@ class FlowSpec extends munit.CatsEffectSuite {
   }
 
   /** token は Cookie のセッション（Bearer で始まれば API トークン）. None ならログインしていない（画面からの要求）. */
-  private def call(
-    token: Option[String],
-    m: Method,
-    path: String,
-    body: Option[Json] = None
-  ): IO[Response[IO]] = {
+  private def call(token: Option[String], m: Method, path: String, body: Option[Json] = None): IO[Response[IO]] = {
     val base0 = Request[IO](m, Uri.unsafeFromString(path))
     val base = token match {
       case Some(t) if t.startsWith("skaka_") => base0.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, t)))
@@ -195,32 +185,18 @@ class FlowSpec extends munit.CatsEffectSuite {
     fixture().app.run(body.fold(base)(base.withEntity(_)))
   }
 
-  private def call(
-    token: String,
-    m: Method,
-    path: String
-  ): IO[Response[IO]] = call(Some(token), m, path)
-  private def call(
-    token: String,
-    m: Method,
-    path: String,
-    body: Json
-  ): IO[Response[IO]] = call(Some(token), m, path, Some(body))
+  private def call(token: String, m: Method, path: String): IO[Response[IO]] = call(Some(token), m, path)
+  private def call(token: String, m: Method, path: String, body: Json): IO[Response[IO]] =
+    call(Some(token), m, path, Some(body))
 
-  private def json[A: io.circe.Decoder](
-    r: Response[IO]
-  ): IO[A] =
+  private def json[A: io.circe.Decoder](r: Response[IO]): IO[A] =
     if r.status.isSuccess then r.as[A] else r.bodyText.compile.string.flatMap(t => IO(fail(s"${r.status}: $t")))
 
   /** 切符で接続し、届いたメッセージを読むための小道具. */
-  private final class Conn(
-    val id: String,
-    q: Queue[IO, Option[ServerMsg]]) {
+  private final class Conn(val id: String, q: Queue[IO, Option[ServerMsg]]) {
 
     /** 条件に合うメッセージが届くまで読む（それまでのものは捨てる）. */
-    def await[A](
-      pf: PartialFunction[ServerMsg, A]
-    ): IO[A] =
+    def await[A](pf: PartialFunction[ServerMsg, A]): IO[A] =
       q.take.flatMap {
         case Some(m) if pf.isDefinedAt(m) => IO.pure(pf(m))
         case Some(_) => await(pf)
@@ -229,21 +205,10 @@ class FlowSpec extends munit.CatsEffectSuite {
     def closed: IO[String] = await { case ServerMsg.Closed(r) => r }
   }
 
-  private def connect(
-    ticket: String
-  ): IO[Conn] =
-    fixture().hub.connect(ticket).map(_.getOrElse(fail("切符が使えない"))).map(
-      (
-        id,
-        q
-      ) => Conn(id, q)
-    )
+  private def connect(ticket: String): IO[Conn] =
+    fixture().hub.connect(ticket).map(_.getOrElse(fail("切符が使えない"))).map((id, q) => Conn(id, q))
 
-  private def join(
-    token: Option[String],
-    code: String,
-    guest: Option[String] = None
-  ): IO[JoinDto] =
+  private def join(token: Option[String], code: String, guest: Option[String] = None): IO[JoinDto] =
     call(token, Method.POST, s"/api/rooms/$code/join", Some(JoinReq(guest).asJson)).flatMap(json[JoinDto])
 
   test("OIDC でログインすると自分の会議室ができる. ログアウトで IdP からもログアウトする") {
@@ -390,11 +355,7 @@ class FlowSpec extends munit.CatsEffectSuite {
     } yield ()
   }
 
-  private def mcp(
-    token: String,
-    method: String,
-    params: Json = Json.obj()
-  ): IO[Json] =
+  private def mcp(token: String, method: String, params: Json = Json.obj()): IO[Json] =
     call(
       Some(token),
       Method.POST,
@@ -403,11 +364,7 @@ class FlowSpec extends munit.CatsEffectSuite {
     )
       .flatMap(json[Json]).map(_.hcursor.downField("result").focus.getOrElse(fail("no result")))
 
-  private def tool(
-    token: String,
-    name: String,
-    args: (String, Json)*
-  ): IO[(Boolean, String)] =
+  private def tool(token: String, name: String, args: (String, Json)*): IO[(Boolean, String)] =
     mcp(token, "tools/call", Json.obj("name" -> name.asJson, "arguments" -> Json.obj(args*))).map { r =>
       (
         r.hcursor.get[Boolean]("isError").getOrElse(true),
@@ -503,12 +460,7 @@ class FlowSpec extends munit.CatsEffectSuite {
   )
     .map(_.toByte)
 
-  private def chunk(
-    t: String,
-    id: UUID,
-    seq: Int,
-    b: Array[Byte]
-  ): IO[Response[IO]] =
+  private def chunk(t: String, id: UUID, seq: Int, b: Array[Byte]): IO[Response[IO]] =
     fixture().app.run(Request[IO](
       Method.PUT,
       Uri.unsafeFromString(s"/api/recordings/$id/chunks/$seq")
@@ -516,11 +468,7 @@ class FlowSpec extends munit.CatsEffectSuite {
       .putHeaders(Cookie(RequestCookie("skaka_session", t)), Header.Raw(CIString("X-Skaka"), "1")))
 
   /** 保存し終わるまで待つ. */
-  private def saved(
-    t: String,
-    id: UUID,
-    n: Int = 30
-  ): IO[RecordingDto] =
+  private def saved(t: String, id: UUID, n: Int = 30): IO[RecordingDto] =
     call(t, Method.GET, s"/api/recordings/$id").flatMap(json[RecordingDto]).flatMap { r =>
       if r.status == RecordingStatus.Saving && n > 0 then IO.sleep(100.millis) *> saved(t, id, n - 1) else IO.pure(r)
     }
@@ -662,20 +610,14 @@ class FlowSpec extends munit.CatsEffectSuite {
     val redirect = "http://skuaka.test/api/integrations/skaka/callback"
     val verifier = sbirds.auth.Crypto.randomToken(48)
     val basic = Authorization(BasicCredentials("skuaka", "skuaka-test-secret-0123456789"))
-    def authorize(
-      t: String,
-      extra: String = ""
-    ) =
+    def authorize(t: String, extra: String = "") =
       call(
         t,
         Method.GET,
         s"/oauth/authorize?client_id=skuaka&redirect_uri=${java.net.URLEncoder.encode(redirect, "UTF-8")}&response_type=code" +
           s"&scope=read+write&state=st1&code_challenge=${sbirds.auth.Crypto.pkceChallenge(verifier)}&code_challenge_method=S256$extra"
       )
-    def token(
-      code: String,
-      auth: Authorization = basic
-    ) =
+    def token(code: String, auth: Authorization = basic) =
       f.app.run(Request[IO](Method.POST, uri"/oauth/token").withEntity(UrlForm(
         "grant_type" -> "authorization_code",
         "code" -> code,
@@ -775,11 +717,7 @@ class FlowSpec extends munit.CatsEffectSuite {
   }
 
   /** 文字起こしの音声を送る（本文はそのまま. 偽の Whisper は本文を UTF-8 の文字として返す）. */
-  private def speech(
-    key: String,
-    text: String,
-    mime: String = "audio/wav"
-  ): IO[Response[IO]] =
+  private def speech(key: String, text: String, mime: String = "audio/wav"): IO[Response[IO]] =
     fixture().app.run(Request[IO](Method.POST, Uri.unsafeFromString(s"/api/speech/$key?ago=1500"))
       .withEntity(text.getBytes("UTF-8"))(using EntityEncoder.byteArrayEncoder).putHeaders(Header.Raw(
         CIString("Content-Type"),
@@ -973,17 +911,12 @@ class FlowSpec extends munit.CatsEffectSuite {
 }
 
 /** テスト用の偽の skawau（OAuth のトークンの発行・ルート・アップロード・ユーザーの照会・共有）. */
-final class FakeSkawau(
-  val uploads: Ref[IO, List[(Map[String, String], Array[Byte])]],
-  val shares: Ref[IO, List[(UUID, UUID)]],
-  val writes: Ref[IO, List[(UUID, Array[Byte])]]) {
+final class FakeSkawau(val uploads: Ref[IO, List[(Map[String, String], Array[Byte])]],
+                       val shares: Ref[IO, List[(UUID, UUID)]],
+                       val writes: Ref[IO, List[(UUID, Array[Byte])]]) {
   import FakeSkawau.*
 
-  private def authed(
-    req: Request[IO]
-  )(
-    f: => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def authed(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if req.headers.get[Authorization].exists(_.credentials == Credentials.Token(AuthScheme.Bearer, Token)) then f
     else IO.pure(Response[IO](Status.Unauthorized))
 
@@ -1040,14 +973,10 @@ object FakeSkawau {
 }
 
 /** テスト用の偽の skuaka（トークン1つ・ユーザー2人・メインのカレンダー1つ・予定）. */
-final class FakeSkuaka(
-  val events: Ref[IO, Map[UUID, Json]]) {
+final class FakeSkuaka(val events: Ref[IO, Map[UUID, Json]]) {
   import FakeSkuaka.*
 
-  def add(
-    title: String,
-    location: String
-  ): IO[UUID] = {
+  def add(title: String, location: String): IO[UUID] = {
     val id = UUID.randomUUID()
     events.update(_.updated(
       id,
@@ -1068,11 +997,7 @@ final class FakeSkuaka(
     )).as(id)
   }
 
-  private def authed(
-    req: Request[IO]
-  )(
-    f: => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def authed(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if req.headers.get[Authorization].exists(_.credentials == Credentials.Token(AuthScheme.Bearer, Token)) then f
     else IO.pure(Response[IO](Status.Unauthorized))
 
@@ -1123,25 +1048,18 @@ object FakeSkuaka {
 
 /** テスト用の偽の Whisper（本文を UTF-8 の文字として返す）. */
 object FakeStt extends SpeechToText {
-  def transcribe(
-    audio: Array[Byte],
-    mime: String
-  ): IO[Either[String, String]] = IO.pure(Right(new String(audio, "UTF-8")))
+  def transcribe(audio: Array[Byte], mime: String): IO[Either[String, String]] =
+    IO.pure(Right(new String(audio, "UTF-8")))
 }
 
 /** テスト用の偽の skakapo（API トークンの確かめ・添付・依頼の作成・会話の出来事）. 1回目の出来事の問い合わせは作業中、2回目から返事. */
-final class FakeSkakapo(
-  val attachment: Ref[IO, String],
-  val request: Ref[IO, Json],
-  val answer: Ref[IO, String],
-  polls: Ref[IO, Int]) {
+final class FakeSkakapo(val attachment: Ref[IO, String],
+                        val request: Ref[IO, Json],
+                        val answer: Ref[IO, String],
+                        polls: Ref[IO, Int]) {
   import FakeSkakapo.*
 
-  private def authed(
-    req: Request[IO]
-  )(
-    f: Boolean => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def authed(req: Request[IO])(f: Boolean => IO[Response[IO]]): IO[Response[IO]] =
     req.headers.get[Authorization].map(_.credentials) match {
       case Some(Credentials.Token(AuthScheme.Bearer, Token)) => f(true)
       case Some(Credentials.Token(AuthScheme.Bearer, ReadOnly)) => f(false)
@@ -1164,10 +1082,7 @@ final class FakeSkakapo(
     case req @ GET -> Root / "api" / "sessions" / _ / "events" =>
       authed(req)(_ =>
         (polls.getAndUpdate(_ + 1), answer.get).flatMapN {
-          (
-            n,
-            a
-          ) =>
+          (n, a) =>
             if n == 0 then Ok(Json.obj("session" -> Json.obj("status" -> "running".asJson), "events" -> Json.arr()))
             else
               Ok(Json.obj(

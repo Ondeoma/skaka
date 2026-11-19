@@ -4,15 +4,10 @@ import java.nio.ByteBuffer
 
 class WebmSpec extends munit.FunSuite {
 
-  private def bytes(
-    xs: Int*
-  ): Array[Byte] = xs.map(_.toByte).toArray
+  private def bytes(xs: Int*): Array[Byte] = xs.map(_.toByte).toArray
 
   /** 要素（大きさは1バイト）. */
-  private def el(
-    id: Array[Byte],
-    data: Array[Byte]
-  ): Array[Byte] = id ++ bytes(0x80 | data.length) ++ data
+  private def el(id: Array[Byte], data: Array[Byte]): Array[Byte] = id ++ bytes(0x80 | data.length) ++ data
 
   private val ebml = el(bytes(0x1a, 0x45, 0xdf, 0xa3), el(bytes(0x42, 0x82), "webm".getBytes))
   private val scale = el(bytes(0x2a, 0xd7, 0xb1), bytes(0x0f, 0x42, 0x40)) // 1,000,000
@@ -22,15 +17,11 @@ class WebmSpec extends munit.FunSuite {
   private val cluster = bytes(0x1f, 0x43, 0xb6, 0x75, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xe7, 0x81, 0x00)
   private val unknown = bytes(0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)
 
-  private def file(
-    segSize: Array[Byte],
-    children: Array[Byte]
-  ) = ebml ++ bytes(0x18, 0x53, 0x80, 0x67) ++ segSize ++ children
+  private def file(segSize: Array[Byte], children: Array[Byte]) = ebml ++ bytes(0x18, 0x53, 0x80, 0x67) ++ segSize ++
+    children
 
   /** Duration の値（8バイトの浮動小数）. */
-  private def duration(
-    b: Array[Byte]
-  ): Option[Double] =
+  private def duration(b: Array[Byte]): Option[Double] =
     b.indices.find(i => i + 3 <= b.length && b(i) == 0x44 && b(i + 1) == 0x89.toByte && b(i + 2) == 0x88.toByte)
       .map(i => ByteBuffer.wrap(b, i + 3, 8).getDouble)
 

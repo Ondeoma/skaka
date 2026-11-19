@@ -9,54 +9,37 @@ import java.util.UUID
 // 映像・音声は参加者どうしが WebRTC で直接送り合い（メッシュ）、サーバーは SDP・ICE の中継と、参加者の状態・チャットを受け持つ.
 
 /** マイク・カメラ・画面共有・挙手の状態. screen は画面共有の MediaStream の id（共有していなければ None）. */
-final case class MediaState(
-  audio: Boolean,
-  video: Boolean,
-  screen: Option[String] = None,
-  hand: Boolean = false)
+final case class MediaState(audio: Boolean, video: Boolean, screen: Option[String] = None, hand: Boolean = false)
   derives ConfiguredCodec
 
 /** 参加者. id は接続ごとの値（同じ人が2つの端末で入れば2人）. host は主催者（会議室の持ち主と、主催者にされた人）. */
-final case class PeerInfo(
-  id: String,
-  userId: Option[UUID],
-  name: String,
-  avatarUrl: Option[String],
-  host: Boolean,
-  guest: Boolean,
-  media: MediaState,
-  joinedAt: String) derives Encoder.AsObject, Decoder
+final case class PeerInfo(id: String,
+                          userId: Option[UUID],
+                          name: String,
+                          avatarUrl: Option[String],
+                          host: Boolean,
+                          guest: Boolean,
+                          media: MediaState,
+                          joinedAt: String) derives Encoder.AsObject, Decoder
 
 /** チャット. to は個別のメッセージの相手（参加者の id. 全員宛なら None）. */
-final case class ChatMsg(
-  id: String,
-  from: String,
-  name: String,
-  userId: Option[UUID],
-  text: String,
-  at: String,
-  to: Option[String] = None)
+final case class ChatMsg(id: String,
+                         from: String,
+                         name: String,
+                         userId: Option[UUID],
+                         text: String,
+                         at: String,
+                         to: Option[String] = None)
   derives ConfiguredCodec
 
 /** 録画中であること（参加者全員に知らせる）. */
-final case class RecordingNotice(
-  id: UUID,
-  by: String,
-  startedAt: String) derives Encoder.AsObject, Decoder
+final case class RecordingNotice(id: UUID, by: String, startedAt: String) derives Encoder.AsObject, Decoder
 
 /** 文字起こし中であること（主催者が始める. 参加者全員に知らせる）. */
-final case class TranscribeNotice(
-  by: String,
-  startedAt: String) derives Encoder.AsObject, Decoder
+final case class TranscribeNotice(by: String, startedAt: String) derives Encoder.AsObject, Decoder
 
 /** 文字起こしの1行（話した人の端末が送った音声を、サーバーが Whisper で文字にしたもの）. at は話し始めた時刻. */
-final case class TranscriptLine(
-  id: String,
-  peer: String,
-  name: String,
-  userId: Option[UUID],
-  text: String,
-  at: String)
+final case class TranscriptLine(id: String, peer: String, name: String, userId: Option[UUID], text: String, at: String)
   derives Encoder.AsObject, Decoder
 
 object Reactions {

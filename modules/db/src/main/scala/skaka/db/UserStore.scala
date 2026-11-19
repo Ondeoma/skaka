@@ -11,15 +11,14 @@ import java.time.Instant
 import java.util.UUID
 
 /** avatarUrl は表示するアイコン（保存したものがあればその URL、なければ IdP の画像）. */
-final case class User(
-  id: UUID,
-  sub: String,
-  name: String,
-  email: Option[String],
-  avatarUrl: Option[String],
-  timezone: String,
-  disabled: Boolean,
-  avatarUploaded: Boolean) {
+final case class User(id: UUID,
+                      sub: String,
+                      name: String,
+                      email: Option[String],
+                      avatarUrl: Option[String],
+                      timezone: String,
+                      disabled: Boolean,
+                      avatarUploaded: Boolean) {
   def me: MeDto = MeDto(id, name, email, avatarUrl, timezone, avatarUploaded)
   def brief: UserBrief = me.brief
 }
@@ -28,44 +27,31 @@ final case class User(
 object UserCols {
 
   /** 表示するアイコンの URL. 保存したアイコンがあれば /api/users/{id}/avatar?v={版}（版を変えるとブラウザのキャッシュが切り替わる）. */
-  def avatar(
-    a: String
-  ): Fragment = Fragment.const(
+  def avatar(a: String): Fragment = Fragment.const(
     s"(case when $a.avatar_version is not null then '/api/users/' || $a.id || '/avatar?v=' || $a.avatar_version else $a.avatar_url end)"
   )
 }
 
 /** ユーザー・セッション・ログイン途中の状態. */
-final class UserStore(
-  xa: Transactor[IO]) extends TxStore(xa) {
+final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   private val cols = fr"app_user.id, sub, name, email," ++ UserCols.avatar("app_user") ++
     fr", timezone, disabled, avatar_version is not null"
 
   /** ログインのたびに作成・更新する（名前・メール・アイコンは IdP の値に合わせる）. */
-  def upsert(
-    sub: String,
-    name: String,
-    email: Option[String],
-    avatar: Option[String]
-  ): IO[User] = tx(
+  def upsert(sub: String, name: String, email: Option[String], avatar: Option[String]): IO[User] = tx(
     (fr"""insert into app_user (id, sub, name, email, avatar_url, last_login_at) values (${UUID.randomUUID()}, $sub, $name, $email, $avatar, now())
           on conflict (sub) do update set name = excluded.name, email = excluded.email,
             avatar_url = excluded.avatar_url, last_login_at = now()
           returning""" ++ cols).query[User].unique
   )
 
-  def find(
-    id: UUID
-  ): IO[Option[User]] = tx(findC(id))
+  def find(id: UUID): IO[Option[User]] = tx(findC(id))
 
-  def findC(
-    id: UUID
-  ): ConnectionIO[Option[User]] = (fr"select" ++ cols ++ fr"from app_user where id = $id").query[User].option
+  def findC(id: UUID)
+    : ConnectionIO[Option[User]] = (fr"select" ++ cols ++ fr"from app_user where id = $id").query[User].option
 
-  def briefs(
-    ids: List[UUID]
-  ): ConnectionIO[Map[UUID, UserBrief]] =
+  def briefs(ids: List[UUID]): ConnectionIO[Map[UUID, UserBrief]] =
     if ids.isEmpty then Map.empty[UUID, UserBrief].pure[ConnectionIO]
     else
       (fr"select" ++ cols ++ fr"from app_user where id = any(${ids.distinct.toArray})").query[User].to[List].map(_.map(
@@ -73,10 +59,7 @@ final class UserStore(
       ).toMap)
 
   /** 名前・メールで探す（会議の予定に招待する人の候補）. */
-  def search(
-    q: String,
-    limit: Int
-  ): IO[List[UserBrief]] = tx {
+  def search(q: String, limit: Int): IO[List[UserBrief]] = tx {
     val like = Sql.like(q)
     (fr"select" ++ cols ++
       fr"from app_user where not disabled and (name ilike $like or email ilike $like) order by name limit $limit")
@@ -84,19 +67,13 @@ final class UserStore(
   }
 
   /** メールアドレスが一致する有効なユーザー（大文字小文字は区別しない. skuaka の予定に招待された人を探す）. */
-  def idsByEmail(
-    emails: List[String]
-  ): IO[List[UUID]] = {
+  def idsByEmail(emails: List[String]): IO[List[UUID]] = {
     val ms = emails.map(_.trim.toLowerCase).filter(_.nonEmpty).distinct
     if ms.isEmpty then IO.pure(Nil)
     else tx(sql"select id from app_user where not disabled and lower(email) = any(${ms.toArray})".query[UUID].to[List])
   }
 
-  def updateMe(
-    id: UUID,
-    name: Option[String],
-    timezone: Option[String]
-  ): IO[Unit] = tx {
+  def updateMe(id: UUID, name: Option[String], timezone: Option[String]): IO[Unit] = tx {
     val sets =
       List(name.map(_.trim).filter(_.nonEmpty).map(v => fr"name = $v"), timezone.map(v => fr"timezone = $v")).flatten
     if sets.isEmpty then ().pure[ConnectionIO]
@@ -106,45 +83,26 @@ final class UserStore(
   // ---------------------------------------------------------------- アイコン
 
   /** アイコンを保存する（版を1つ進める）. */
-  def saveAvatar(
-    id: UUID,
-    contentType: String,
-    data: Array[Byte]
-  ): IO[Unit] = tx(
+  def saveAvatar(id: UUID, contentType: String, data: Array[Byte]): IO[Unit] = tx(
     sql"""insert into user_avatar (user_id, content_type, data) values ($id, $contentType, $data)
           on conflict (user_id) do update set content_type = excluded.content_type, data = excluded.data, updated_at = now()""".update.run *>
       sql"update app_user set avatar_version = coalesce(avatar_version, 0) + 1 where id = $id".update.run.void
   )
 
   /** 保存したアイコンを消す（IdP の画像に戻る）. */
-  def deleteAvatar(
-    id: UUID
-  ): IO[Unit] = tx(
-    sql"delete from user_avatar where user_id = $id".update.run *>
-      sql"update app_user set avatar_version = null where id = $id".update.run.void
-  )
+  def deleteAvatar(id: UUID): IO[Unit] = tx(sql"delete from user_avatar where user_id = $id".update.run *>
+    sql"update app_user set avatar_version = null where id = $id".update.run.void)
 
-  def avatar(
-    id: UUID
-  ): IO[Option[(String, Array[Byte])]] = tx(
-    sql"select content_type, data from user_avatar where user_id = $id".query[(String, Array[Byte])].option
-  )
+  def avatar(id: UUID): IO[Option[(String, Array[Byte])]] =
+    tx(sql"select content_type, data from user_avatar where user_id = $id".query[(String, Array[Byte])].option)
 
   // ---------------------------------------------------------------- セッション
 
-  def createSession(
-    hash: Array[Byte],
-    userId: UUID,
-    idToken: Option[String],
-    expires: Instant
-  ): IO[Unit] = tx(
+  def createSession(hash: Array[Byte], userId: UUID, idToken: Option[String], expires: Instant): IO[Unit] = tx(
     sql"insert into session (token_hash, user_id, id_token, expires_at) values ($hash, $userId, $idToken, $expires)".update.run.void
   )
 
-  def findSession(
-    hash: Array[Byte],
-    now: Instant
-  ): IO[Option[User]] = tx(
+  def findSession(hash: Array[Byte], now: Instant): IO[Option[User]] = tx(
     sql"select user_id from session where token_hash = $hash and expires_at > $now".query[UUID].option.flatMap {
       case None => none[User].pure[ConnectionIO]
       case Some(uid) => findC(uid).map(_.filterNot(_.disabled))
@@ -152,71 +110,55 @@ final class UserStore(
   )
 
   /** セッションの ID トークン（OIDC でログインしたとき）. */
-  def sessionIdToken(
-    hash: Array[Byte]
-  ): IO[Option[String]] =
+  def sessionIdToken(hash: Array[Byte]): IO[Option[String]] =
     tx(sql"select id_token from session where token_hash = $hash".query[Option[String]].option.map(_.flatten))
 
   /** セッションを消し、IdP のログアウトに渡す ID トークンを返す. */
-  def deleteSession(
-    hash: Array[Byte]
-  ): IO[Option[String]] = tx(
-    sql"delete from session where token_hash = $hash returning id_token".query[Option[String]].option.map(_.flatten)
-  )
+  def deleteSession(hash: Array[Byte]): IO[Option[String]] =
+    tx(sql"delete from session where token_hash = $hash returning id_token".query[Option[String]].option.map(_.flatten))
 
-  def purgeExpired(
-    now: Instant
-  ): IO[Unit] = tx(
-    sql"delete from session where expires_at < $now".update.run *>
-      sql"delete from login_state where created_at < now() - interval '1 hour'".update.run *>
-      sql"delete from oauth_state where expires_at < $now".update.run.void
-  )
+  def purgeExpired(now: Instant): IO[Unit] = tx(sql"delete from session where expires_at < $now".update.run *>
+    sql"delete from login_state where created_at < now() - interval '1 hour'".update.run *>
+    sql"delete from oauth_state where expires_at < $now".update.run.void)
 
   // ---------------------------------------------------------------- API トークン
 
   private val tokenCols = fr"id, name, prefix, scope, created_at, expires_at, last_used_at"
 
-  private def tokenDto(
-    t: (UUID, String, String, String, Instant, Option[Instant], Option[Instant])
-  ): ApiTokenDto =
+  private def tokenDto(t: (UUID, String, String, String, Instant, Option[Instant], Option[Instant])): ApiTokenDto =
     ApiTokenDto(t._1, t._2, t._3, t._4, t._5.toString, t._6.map(_.toString), t._7.map(_.toString))
 
-  def createToken(
-    userId: UUID,
-    name: String,
-    prefix: String,
-    hash: Array[Byte],
-    scope: String,
-    expires: Option[Instant]
-  ): IO[ApiTokenDto] = tx(
+  def createToken(userId: UUID,
+                  name: String,
+                  prefix: String,
+                  hash: Array[Byte],
+                  scope: String,
+                  expires: Option[Instant]): IO[ApiTokenDto] = tx(
     (fr"insert into api_token (id, user_id, name, prefix, token_hash, scope, expires_at) values (${UUID.randomUUID()}, $userId, $name, $prefix, $hash, $scope, $expires) returning" ++
       tokenCols)
       .query[(UUID, String, String, String, Instant, Option[Instant], Option[Instant])].unique.map(tokenDto)
   )
 
   /** 失効していないもの（期限切れも含む. 画面で期限切れと分かるように）. */
-  def tokens(
-    userId: UUID
-  ): IO[List[ApiTokenDto]] = tx(
-    (fr"select" ++ tokenCols ++
-      fr"from api_token where user_id = $userId and revoked_at is null order by created_at desc")
-      .query[(UUID, String, String, String, Instant, Option[Instant], Option[Instant])].to[List].map(_.map(tokenDto))
-  )
+  def tokens(userId: UUID): IO[List[ApiTokenDto]] = tx((fr"select" ++ tokenCols ++
+    fr"from api_token where user_id = $userId and revoked_at is null order by created_at desc").query[(
+    UUID,
+    String,
+    String,
+    String,
+    Instant,
+    Option[Instant],
+    Option[Instant]
+  )].to[List].map(_.map(tokenDto)))
 
-  def revokeToken(
-    userId: UUID,
-    id: UUID
-  ): IO[Boolean] = tx(
+  def revokeToken(userId: UUID, id: UUID): IO[Boolean] = tx(
     sql"update api_token set revoked_at = now() where id = $id and user_id = $userId and revoked_at is null".update.run.map(
       _ > 0
     )
   )
 
   /** 有効なトークンの持ち主とスコープ. 最後に使った日時は1分に1回だけ書く. */
-  def findToken(
-    hash: Array[Byte],
-    now: Instant
-  ): IO[Option[(User, UUID, String)]] = tx(
+  def findToken(hash: Array[Byte], now: Instant): IO[Option[(User, UUID, String)]] = tx(
     sql"""select id, user_id, scope from api_token
           where token_hash = $hash and revoked_at is null and (expires_at is null or expires_at > $now)"""
       .query[(UUID, UUID, String)].option.flatMap {
@@ -229,19 +171,12 @@ final class UserStore(
 
   // ---------------------------------------------------------------- ログイン途中の状態（OIDC）
 
-  def saveLoginState(
-    state: String,
-    verifier: String,
-    nonce: String,
-    returnTo: String
-  ): IO[Unit] = tx(
+  def saveLoginState(state: String, verifier: String, nonce: String, returnTo: String): IO[Unit] = tx(
     sql"insert into login_state (state, verifier, nonce, return_to) values ($state, $verifier, $nonce, $returnTo)".update.run.void
   )
 
   /** 取り出して消す（1回だけ・15分以内）. */
-  def takeLoginState(
-    state: String
-  ): IO[Option[(String, String, String)]] = tx(
+  def takeLoginState(state: String): IO[Option[(String, String, String)]] = tx(
     sql"""delete from login_state where state = $state and created_at > now() - interval '15 minutes'
           returning verifier, nonce, return_to""".query[(String, String, String)].option
   )

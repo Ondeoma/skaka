@@ -13,17 +13,10 @@ import scala.scalajs.js.JSConverters.*
 import scala.util.{Failure, Success, Try}
 
 /** 会議の画面に並べる映像の枠. screen は画面共有. key はその枠の id（自分のカメラは "self"）. */
-final case class Tile(
-  key: String,
-  peer: String,
-  screen: Boolean)
+final case class Tile(key: String, peer: String, screen: Boolean)
 
 /** 浮かんで消えるリアクション. */
-final case class Reaction(
-  id: Int,
-  name: String,
-  emoji: String,
-  left: Int)
+final case class Reaction(id: Int, name: String, emoji: String, left: Int)
 
 /**
  * 会議（1度に1つ）. 映像・音声は参加者どうしが WebRTC で直接送り合う（メッシュ. 相手ごとに RTCPeerConnection）.
@@ -84,9 +77,8 @@ object Meeting {
   val canAdmit: CRV[Boolean] = computed { self.v.exists(me => me.host || (!me.guest && !peers.v.exists(_.host))) }
 
   /** 参加者のアイコン用（ゲストは接続の id から色を決める）. */
-  def brief(
-    p: PeerInfo
-  ): UserBrief = UserBrief(p.userId.getOrElse(new java.util.UUID(0, p.id.hashCode)), p.name, None, p.avatarUrl)
+  def brief(p: PeerInfo): UserBrief =
+    UserBrief(p.userId.getOrElse(new java.util.UUID(0, p.id.hashCode)), p.name, None, p.avatarUrl)
 
   /** 画面の大きさ（ギャラリーの並べ方に使う）. */
   val viewport: RV[(Int, Int)] = RV((dom.window.innerWidth.toInt, dom.window.innerHeight.toInt))
@@ -121,10 +113,7 @@ object Meeting {
 
   private def mediaDevices: js.Dynamic = dom.window.navigator.asInstanceOf[js.Dynamic].mediaDevices
 
-  private def tracks(
-    s: js.Dynamic,
-    kind: String
-  ): List[js.Dynamic] =
+  private def tracks(s: js.Dynamic, kind: String): List[js.Dynamic] =
     s.getTracks().asInstanceOf[js.Array[js.Dynamic]].toList.filter(_.kind.asInstanceOf[String] == kind)
 
   def audioTrack: Option[js.Dynamic] = local.flatMap(tracks(_, "audio").headOption)
@@ -136,9 +125,7 @@ object Meeting {
   private var camera: Option[js.Dynamic] = None
 
   /** 送る映像を入れ替える（自分の枠・相手・録画に届く）. */
-  private def setLocalVideo(
-    t: Option[js.Dynamic]
-  ): Unit = {
+  private def setLocalVideo(t: Option[js.Dynamic]): Unit = {
     videoTrack.foreach(old => local.foreach(_.removeTrack(old)))
     t.foreach(x => local.foreach(_.addTrack(x)))
     conns.values.foreach(_.setVideo(t))
@@ -150,9 +137,7 @@ object Meeting {
    * カメラから送る映像を作る（背景を変えていれば切り抜いた映像）. 背景を変えるときは、できあがるまで映像を送らない
    * （元の背景が一瞬でも相手に見えないように）.
    */
-  private def route(
-    cam: js.Dynamic
-  ): Unit =
+  private def route(cam: js.Dynamic): Unit =
     if (!Background.active) { Background.detach(); setLocalVideo(Some(cam)) }
     else {
       if (videoTrack.contains(cam)) setLocalVideo(None)
@@ -165,10 +150,7 @@ object Meeting {
   // ---------------------------------------------------------------- 機器
 
   /** カメラ・マイクの条件（品質の設定から. 機器を選んでいればその機器）. */
-  private def constraint(
-    kind: String,
-    withDevice: Boolean = true
-  ): js.Dynamic = {
+  private def constraint(kind: String, withDevice: Boolean = true): js.Dynamic = {
     val id = Prefs.get(kind, "")
     val c = kind match {
       case "audioinput" =>
@@ -192,9 +174,7 @@ object Meeting {
   }
 
   /** 品質の設定を変えた: 使っているカメラ・マイク・画面共有と、送る量に反映する. */
-  def applyQuality(
-    kind: String
-  ): Unit = kind match {
+  def applyQuality(kind: String): Unit = kind match {
     case "video" =>
       // カメラはそのまま条件を変える（できなければ取り直す）
       camera.foreach(t =>
@@ -252,10 +232,7 @@ object Meeting {
     if (w.isEmpty) "" else s"${w.get.toInt}×${h.getOrElse(0.0).toInt}" + f.fold("")(x => s"・${math.round(x)}fps")
   }
 
-  private def getUserMedia(
-    audio: Boolean,
-    video: Boolean
-  ): Future[js.Dynamic] =
+  private def getUserMedia(audio: Boolean, video: Boolean): Future[js.Dynamic] =
     if (js.isUndefined(mediaDevices)) Future.failed(new Exception("このブラウザ（または http の接続）ではカメラ・マイクを使えません"))
     else
       mediaDevices.getUserMedia(js.Dynamic.literal(
@@ -263,9 +240,7 @@ object Meeting {
         video = if (video) constraint("videoinput") else false
       )).asInstanceOf[js.Promise[js.Dynamic]].toFuture
 
-  private def mediaError(
-    e: Throwable
-  ): String = {
+  private def mediaError(e: Throwable): String = {
     val name = Try(
       e.asInstanceOf[js.JavaScriptException].exception.asInstanceOf[js.Dynamic].name.asInstanceOf[String]
     ).getOrElse("")
@@ -349,10 +324,7 @@ object Meeting {
   }
 
   /** 機器を選び直した（使っているものを差し替える）. */
-  def setDevice(
-    kind: String,
-    id: String
-  ): Unit = {
+  def setDevice(kind: String, id: String): Unit = {
     Prefs.set(kind, id)
     kind match {
       case "audioinput" => if (audioTrack.isDefined || mic.v) enableAudio()
@@ -363,9 +335,7 @@ object Meeting {
   }
 
   /** 音を出す機器（setSinkId に対応したブラウザだけ）. */
-  private def sink(
-    el: dom.HTMLMediaElement
-  ): Unit = {
+  private def sink(el: dom.HTMLMediaElement): Unit = {
     val id = Prefs.get("audiooutput", "")
     val d = el.asInstanceOf[js.Dynamic]
     if (id.nonEmpty && !js.isUndefined(d.setSinkId))
@@ -408,11 +378,7 @@ object Meeting {
   // ---------------------------------------------------------------- 入る・出る
 
   /** 入る（切符をもらって WebSocket につなぐ）. */
-  def join(
-    roomCode: String,
-    name: String,
-    guestName: Option[String]
-  ): Unit = {
+  def join(roomCode: String, name: String, guestName: Option[String]): Unit = {
     code := roomCode
     roomName := name
     phase := "connecting"
@@ -427,9 +393,7 @@ object Meeting {
     }
   }
 
-  private def connect(
-    ticket: String
-  ): Unit = {
+  private def connect(ticket: String): Unit = {
     val proto = if (dom.window.location.protocol == "https:") "wss:" else "ws:"
     val sock = new dom.WebSocket(s"$proto//${dom.window.location.host}/ws/$ticket")
     ws = Some(sock)
@@ -496,9 +460,7 @@ object Meeting {
     streams := streams.v + 1
   }
 
-  def send(
-    m: ClientMsg
-  ): Unit = ws.filter(_.readyState == dom.WebSocket.OPEN).foreach(_.send(m.asJson.noSpaces))
+  def send(m: ClientMsg): Unit = ws.filter(_.readyState == dom.WebSocket.OPEN).foreach(_.send(m.asJson.noSpaces))
 
   /** 自分の状態を知らせる. */
   def publish(): Unit = {
@@ -514,24 +476,15 @@ object Meeting {
 
   def toggleHand(): Unit = { hand := !hand.v; publish() }
 
-  def react(
-    emoji: String
-  ): Unit = send(ClientMsg.React(emoji))
+  def react(emoji: String): Unit = send(ClientMsg.React(emoji))
 
-  def say(
-    text: String,
-    to: Option[String]
-  ): Unit = send(ClientMsg.Chat(text, to))
+  def say(text: String, to: Option[String]): Unit = send(ClientMsg.Chat(text, to))
 
   // ---------------------------------------------------------------- サーバーから
 
-  private def name(
-    id: String
-  ): String = if (id == selfId) "あなた" else peers.v.find(_.id == id).map(_.name).getOrElse("")
+  private def name(id: String): String = if (id == selfId) "あなた" else peers.v.find(_.id == id).map(_.name).getOrElse("")
 
-  private def onServer(
-    m: ServerMsg
-  ): Unit = m match {
+  private def onServer(m: ServerMsg): Unit = m match {
     case ServerMsg.Welcome(me, ps, history, lk, started, recording, transcribing) =>
       self := Some(me)
       Recorder.notice := recording
@@ -619,10 +572,7 @@ object Meeting {
    * 相手との接続を作る. initiator は最初の offer を出す側（あとから入った側）. 両方が同時に offer を出すと、
    * 譲った側の ICE の候補が捨てられて ICE が始まらないことがあるため、最初の1回はどちらか一方からにする.
    */
-  private def open(
-    id: String,
-    initiator: Boolean
-  ): PeerConn = conns.getOrElse(
+  private def open(id: String, initiator: Boolean): PeerConn = conns.getOrElse(
     id, {
       val c = new PeerConn(id, polite = selfId < id, initiator)
       conns += id -> c
@@ -631,17 +581,12 @@ object Meeting {
     }
   )
 
-  private def drop(
-    id: String
-  ): Unit = {
+  private def drop(id: String): Unit = {
     conns.get(id).foreach(_.close())
     conns -= id
     remote -= id
     audioEls.filter(_._1.startsWith(id + "/")).foreach {
-      (
-        k,
-        el
-      ) => el.remove(); audioEls -= k
+      (k, el) => el.remove(); audioEls -= k
     }
     analysers.keys.filter(_.startsWith(id)).foreach(stopSpeaking)
     lastLoud -= id
@@ -662,23 +607,15 @@ object Meeting {
   def remoteStreams: List[js.Dynamic] = remote.values.flatMap(_.values).toList
 
   /** 相手の MediaStream（screen = true なら画面共有）. */
-  def streamOf(
-    peer: String,
-    screenShare: Boolean
-  ): Option[js.Dynamic] = {
+  def streamOf(peer: String, screenShare: Boolean): Option[js.Dynamic] = {
     val sid = peers.v.find(_.id == peer).flatMap(_.media.screen)
-    remote.getOrElse(peer, Map.empty).find(
-      (
-        id,
-        _
-      ) => if (screenShare) sid.contains(id) else !sid.contains(id)
-    ).map(_._2)
+    remote.getOrElse(
+      peer,
+      Map.empty
+    ).find((id, _) => if (screenShare) sid.contains(id) else !sid.contains(id)).map(_._2)
   }
 
-  private def onRemoteStream(
-    peer: String,
-    s: js.Dynamic
-  ): Unit = {
+  private def onRemoteStream(peer: String, s: js.Dynamic): Unit = {
     val sid = s.id.asInstanceOf[String]
     if (!remote.getOrElse(peer, Map.empty).contains(sid)) {
       remote = remote.updated(peer, remote.getOrElse(peer, Map.empty).updated(sid, s))
@@ -697,10 +634,7 @@ object Meeting {
   }
 
   /** 1人の相手との RTCPeerConnection. */
-  private final class PeerConn(
-    val id: String,
-    polite: Boolean,
-    initiator: Boolean) {
+  private final class PeerConn(val id: String, polite: Boolean, initiator: Boolean) {
     val pc: js.Dynamic =
       js.Dynamic.newInstance(js.Dynamic.global.RTCPeerConnection)(js.Dynamic.literal(iceServers = ice))
     private var makingOffer = false
@@ -708,9 +642,7 @@ object Meeting {
     private var chain: Future[Unit] = Future.unit
     private var bitrate = 1500000
 
-    private def opts(
-      s: js.Dynamic
-    ) = js.Dynamic.literal(direction = "sendonly", streams = js.Array(s))
+    private def opts(s: js.Dynamic) = js.Dynamic.literal(direction = "sendonly", streams = js.Array(s))
 
     // 自分のカメラ・マイクは送る枠を作っておき、オン・オフはトラックの差し替えで行う（交渉し直さない）.
     // 送る枠を足すと offer を出すので、受ける側は最初の offer に答えてから足す
@@ -752,22 +684,16 @@ object Meeting {
       if (st == "connected") { setBitrate(bitrate); setAudioBitrate(Quality.audioBitrate) }
     }
 
-    private def signal(
-      d: js.Dynamic
-    ): Unit =
+    private def signal(d: js.Dynamic): Unit =
       parse(js.JSON.stringify(d)).foreach(j => send(ClientMsg.Signal(id, j)))
 
     /** 相手からの SDP・ICE（順番に処理する）. */
-    def onSignal(
-      data: io.circe.Json
-    ): Unit = {
+    def onSignal(data: io.circe.Json): Unit = {
       val d = js.JSON.parse(data.noSpaces).asInstanceOf[js.Dynamic]
       chain = chain.flatMap(_ => handle(d)).recover { case e => dom.console.warn(s"signal failed: $e") }
     }
 
-    private def handle(
-      d: js.Dynamic
-    ): Future[Unit] = {
+    private def handle(d: js.Dynamic): Future[Unit] = {
       val desc = d.description
       if (!js.isUndefined(desc) && desc != null) {
         val offer = desc.`type`.asInstanceOf[String] == "offer"
@@ -789,23 +715,16 @@ object Meeting {
 
     if (initiator) addSenders()
 
-    def setAudio(
-      t: Option[js.Dynamic]
-    ): Unit = audioTx.foreach(_.sender.replaceTrack(t.orNull))
-    def setVideo(
-      t: Option[js.Dynamic]
-    ): Unit = { videoTx.foreach(_.sender.replaceTrack(t.orNull)); setBitrate(bitrate) }
+    def setAudio(t: Option[js.Dynamic]): Unit = audioTx.foreach(_.sender.replaceTrack(t.orNull))
+    def setVideo(t: Option[js.Dynamic]): Unit = {
+      videoTx.foreach(_.sender.replaceTrack(t.orNull)); setBitrate(bitrate)
+    }
 
     /** マイクの音の上限（None ならブラウザの既定）. */
-    def setAudioBitrate(
-      bps: Option[Int]
-    ): Unit = limit(audioTx, bps)
+    def setAudioBitrate(bps: Option[Int]): Unit = limit(audioTx, bps)
 
     /** 送る枠の上限（maxBitrate）を変える（None なら外す）. */
-    private def limit(
-      tx: Option[js.Dynamic],
-      bps: Option[Int]
-    ): Unit = tx.foreach(t =>
+    private def limit(tx: Option[js.Dynamic], bps: Option[Int]): Unit = tx.foreach(t =>
       Try {
         val p = t.sender.getParameters()
         p.encodings.asInstanceOf[js.UndefOr[js.Array[js.Dynamic]]].toOption.filter(_.nonEmpty).foreach { es =>
@@ -819,9 +738,7 @@ object Meeting {
     )
 
     /** 画面共有の送る枠を足す（自分の送る枠がまだなら、足すときに一緒に足す）. */
-    def addScreen(
-      s: js.Dynamic
-    ): Unit = if (audioTx.isDefined)
+    def addScreen(s: js.Dynamic): Unit = if (audioTx.isDefined)
       screenTx = s.getTracks().asInstanceOf[js.Array[js.Dynamic]].toList.map(t => pc.addTransceiver(t, opts(s)))
 
     def removeScreen(): Unit = {
@@ -830,9 +747,7 @@ object Meeting {
     }
 
     /** カメラの映像の上限（画面共有は上限を付けない）. */
-    def setBitrate(
-      bps: Int
-    ): Unit = { bitrate = bps; limit(videoTx, Some(bps)) }
+    def setBitrate(bps: Int): Unit = { bitrate = bps; limit(videoTx, Some(bps)) }
 
     def close(): Unit = { dom.window.clearInterval(watchdog); Try(pc.close()) }
   }
@@ -850,10 +765,7 @@ object Meeting {
   }
 
   /** stream の音の大きさを見る（key は "self" か相手の id + "/" + stream の id）. */
-  private def watchSpeaking(
-    peer: String,
-    s: js.Dynamic
-  ): Unit = if (tracks(s, "audio").nonEmpty) ctx().foreach { c =>
+  private def watchSpeaking(peer: String, s: js.Dynamic): Unit = if (tracks(s, "audio").nonEmpty) ctx().foreach { c =>
     val key = if (peer == "self") "self" else s"$peer/${s.id}"
     stopSpeaking(key)
     Try {
@@ -866,15 +778,8 @@ object Meeting {
     if (levelTimer.isEmpty) levelTimer = Some(dom.window.setInterval(() => measure(), 150))
   }
 
-  private def stopSpeaking(
-    key: String
-  ): Unit = {
-    analysers.get(key).foreach(
-      (
-        src,
-        _
-      ) => Try(src.disconnect())
-    )
+  private def stopSpeaking(key: String): Unit = {
+    analysers.get(key).foreach((src, _) => Try(src.disconnect()))
     analysers -= key
     // 見るものがなくなったら止める
     if (analysers.isEmpty) { levelTimer.foreach(dom.window.clearInterval); levelTimer = None; lastLoud = Map.empty }
@@ -885,10 +790,7 @@ object Meeting {
   private def measure(): Unit = {
     val t = js.Date.now()
     analysers.foreach {
-      (
-        key,
-        v
-      ) =>
+      (key, v) =>
         v._2.getByteTimeDomainData(buf)
         var sum = 0.0
         var i = 0
@@ -930,7 +832,5 @@ object Meeting {
     if (tiles.v.exists(_.screen) || pinned.v.isDefined) "speaker" else layout.v
   }
 
-  def setLayout(
-    v: String
-  ): Unit = { layout := v; pinned := None; Prefs.set("layout", v) }
+  def setLayout(v: String): Unit = { layout := v; pinned := None; Prefs.set("layout", v) }
 }

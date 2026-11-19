@@ -7,24 +7,17 @@ import skaka.shared.*
  * 1つの接続から受け付けるメッセージの数の上限（10秒ごと. 超えた分は捨てる）. 全員に送られるチャット・リアクションは少なめに.
  * 中継（SDP・ICE）は、大人数で入った直後にまとめて届くので多めにしてある.
  */
-final class Flood private (
-  ref: Ref[IO, (Long, Int, Int)]) {
+final class Flood private (ref: Ref[IO, (Long, Int, Int)]) {
   import Flood.*
 
-  def allow(
-    m: ClientMsg
-  ): IO[Boolean] = IO.monotonic.flatMap { t =>
+  def allow(m: ClientMsg): IO[Boolean] = IO.monotonic.flatMap { t =>
     val now = t.toMillis
     val broad = m match {
       case _: ClientMsg.Chat | _: ClientMsg.React => true
       case _ => false
     }
     ref.modify {
-      (
-        start,
-        all,
-        chat
-      ) =>
+      (start, all, chat) =>
         {
           val (s, a, c) = if now - start >= WindowMillis then (now, 0, 0) else (start, all, chat)
           val ok = a < MaxMessages && (!broad || c < MaxBroadcasts)

@@ -8,25 +8,17 @@ import org.http4s.client.Client
 import org.http4s.headers.`Content-Type`
 import org.http4s.multipart.{Multiparts, Part}
 
-final class WhisperClient(
-  cfg: WhisperConfig,
-  http: Client[IO],
-  slots: Semaphore[IO],
-  waiting: Ref[IO, Int]) extends SpeechToText {
+final class WhisperClient(cfg: WhisperConfig, http: Client[IO], slots: Semaphore[IO], waiting: Ref[IO, Int])
+  extends SpeechToText {
 
   private val uri = Uri.unsafeFromString(cfg.url.stripSuffix("/") + "/audio/transcriptions")
 
-  private def ext(
-    mime: String
-  ): String =
+  private def ext(mime: String): String =
     if mime.contains("wav") then "wav"
     else if mime.contains("ogg") then "ogg" else if mime.contains("mp4") then "m4a" else "webm"
 
   /** 混んでいる（待ちが多い）ときは断る（会議の字幕は遅れて届いても役に立たないため）. */
-  def transcribe(
-    audio: Array[Byte],
-    mime: String
-  ): IO[Either[String, String]] =
+  def transcribe(audio: Array[Byte], mime: String): IO[Either[String, String]] =
     waiting.modify(n => if n >= cfg.concurrency * Transcriber.Backlog then (n, false) else (n + 1, true)).flatMap {
       case false => IO.pure(Left("文字起こしが混んでいます"))
       // 接続できなかったとき（使い回した接続が切られていたなど）は、1回だけ送り直す
@@ -36,10 +28,7 @@ final class WhisperClient(
         }).map(_.left.map(_._2)).guarantee(waiting.update(_ - 1))
     }
 
-  private def send(
-    audio: Array[Byte],
-    mime: String
-  ): IO[Either[(Int, String), String]] = {
+  private def send(audio: Array[Byte], mime: String): IO[Either[(Int, String), String]] = {
     val ct = MediaType.parse(mime).toOption.getOrElse(MediaType.application.`octet-stream`)
     val fields = Vector[Part[IO]](
       Part.formData("model", cfg.model),
@@ -73,9 +62,6 @@ final class WhisperClient(
 }
 
 object WhisperClient {
-  def create(
-    cfg: WhisperConfig,
-    http: Client[IO]
-  ): IO[WhisperClient] =
+  def create(cfg: WhisperConfig, http: Client[IO]): IO[WhisperClient] =
     (Semaphore[IO](cfg.concurrency.max(1).toLong), Ref.of[IO, Int](0)).mapN(new WhisperClient(cfg, http, _, _))
 }

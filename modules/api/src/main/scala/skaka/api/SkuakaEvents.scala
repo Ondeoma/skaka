@@ -9,14 +9,9 @@ import java.util.UUID
 
 /** 予定（skuaka の EventDto）から、変更の要求（EventReq）を作る. 知らない項目はそのまま渡す. */
 object SkuakaEvents {
-  def toReq(
-    e: Json,
-    location: String
-  ): Json = {
+  def toReq(e: Json, location: String): Json = {
     val c = e.hcursor
-    def f(
-      k: String
-    ): Json = c.downField(k).focus.getOrElse(Json.Null)
+    def f(k: String): Json = c.downField(k).focus.getOrElse(Json.Null)
     Json.obj(
       "calendarId" -> f("calendarId"),
       "title" -> f("title"),
@@ -36,9 +31,7 @@ object SkuakaEvents {
     )
   }
 
-  def roomEvent(
-    e: ACursor
-  ): Option[RoomEventDto] =
+  def roomEvent(e: ACursor): Option[RoomEventDto] =
     (
       e.get[UUID]("id"),
       e.get[String]("title"),

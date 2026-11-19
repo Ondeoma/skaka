@@ -19,8 +19,7 @@ import java.util.UUID
  * 連携: 各ユーザーが OAuth 2.0（認可コード + PKCE）で skawau を許可し（スコープ read write）、skaka は本人の権限で録画を置く.
  * 取り決めは skawau の README の「skea・skiwi・skaka との連携」.
  */
-final class SkawauRoutes(
-  d: ApiRoutes.Deps) extends RouteSupport {
+final class SkawauRoutes(d: ApiRoutes.Deps) extends RouteSupport {
 
   import d.{box, cfg, recordings}
   val sessions: SessionAuth = d.sessions
@@ -44,14 +43,10 @@ final class SkawauRoutes(
     case req @ DELETE -> Root / "api" / "recordings" / UuidVar(id) => deleteRecording(req, id)
   }
 
-  private def getSkawau(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getSkawau(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u => linkDto(u).flatMap(Ok(_)))
 
-  private def getIntegrationsSkawauConnect(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIntegrationsSkawauConnect(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       withClient { c =>
         val state = Crypto.randomToken(24)
@@ -75,9 +70,7 @@ final class SkawauRoutes(
       }
     )
 
-  private def getIntegrationsSkawauCallback(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIntegrationsSkawauCallback(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       withClient { c =>
         param(req, "state").fold(IO.pure(None))(links.takeState).flatMap {
@@ -100,9 +93,7 @@ final class SkawauRoutes(
       }
     )
 
-  private def deleteIntegrationsSkawauConnection(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def deleteIntegrationsSkawauConnection(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       withClient { c =>
         links.token(u.id).flatMap(_.flatMap(t => box.open(t._1)).traverse_(c.revoke)) *> links.deleteToken(u.id) *>
@@ -110,9 +101,7 @@ final class SkawauRoutes(
       }
     )
 
-  private def postRecordings(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postRecordings(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       withRecorder(rec =>
         body[RecordingStartReq](req) { r =>
@@ -125,11 +114,7 @@ final class SkawauRoutes(
       )
     )
 
-  private def putRecordingChunk(
-    req: Request[IO],
-    id: UUID,
-    seq: Int
-  ): IO[Response[IO]] =
+  private def putRecordingChunk(req: Request[IO], id: UUID, seq: Int): IO[Response[IO]] =
     interactive(req)(u =>
       withRecorder(rec =>
         req.body.take(Recorder.MaxChunk.toLong + 1).compile.to(Array).flatMap { data =>
@@ -142,10 +127,7 @@ final class SkawauRoutes(
       )
     )
 
-  private def postRecordingFinish(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postRecordingFinish(req: Request[IO], id: UUID): IO[Response[IO]] =
     interactive(req)(u =>
       withRecorder(rec =>
         body[RecordingFinishReq](req)(r =>
@@ -154,9 +136,7 @@ final class SkawauRoutes(
       )
     )
 
-  private def getRecordings(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getRecordings(req: Request[IO]): IO[Response[IO]] =
     authed(req) { u =>
       val limit = param(req, "limit").flatMap(_.toIntOption).map(_.max(1).min(200)).getOrElse(50)
       (param(req, "meeting"), param(req, "room")) match {
@@ -164,33 +144,20 @@ final class SkawauRoutes(
           scala.util.Try(UUID.fromString(m)).toOption.fold(err(ErrorCode.RecordingMeetingIdInvalid))(id =>
             recordings.forMeeting(u.id, id).flatMap(Ok(_))
           )
-        case (_, Some(c)) => roomOf(c).flatMap(_.fold(err(ErrorCode.RoomNotFound))(
-            (
-              r,
-              _
-            ) =>
-              recordings.list(u.id, Some(r.id), limit).flatMap(Ok(_))
+        case (_, Some(c)) => roomOf(c).flatMap(_.fold(err(ErrorCode.RoomNotFound))((r, _) =>
+            recordings.list(u.id, Some(r.id), limit).flatMap(Ok(_))
           ))
         case _ => recordings.list(u.id, None, limit).flatMap(Ok(_))
       }
     }
 
-  private def getRecording(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getRecording(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(u => recording(u, id)(Ok(_)))
 
-  private def postRecordingRetry(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postRecordingRetry(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(u => withRecorder(rec => rec.retry(u, id).flatMap(answer(_)(_ => recording(u, id)(Accepted(_))))))
 
-  private def deleteRecording(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteRecording(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(u =>
       recording(u, id) { _ =>
         recordings.find(id).flatMap {
@@ -207,55 +174,32 @@ final class SkawauRoutes(
 
   private def callback: String = s"${cfg.publicUrl}/api/integrations/skawau/callback"
 
-  private def redirect(
-    to: String
-  ): IO[Response[IO]] = IO.pure(Response[IO](Status.Found).putHeaders(Location(Uri.unsafeFromString(to))))
+  private def redirect(to: String): IO[Response[IO]] =
+    IO.pure(Response[IO](Status.Found).putHeaders(Location(Uri.unsafeFromString(to))))
 
   /** 設定の画面へ戻る（結果を skawau=… に付ける）. 戻り先は同じサイトのパスだけ. */
-  private def done(
-    returnTo: String,
-    result: String
-  ): IO[Response[IO]] = {
+  private def done(returnTo: String, result: String): IO[Response[IO]] = {
     val back = SafePath.orElse(Option(returnTo), "/settings")
     redirect(back + (if back.contains("?") then "&" else "?") + s"skawau=$result")
   }
 
-  private def withClient(
-    f: SkawauClient => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withClient(f: SkawauClient => IO[Response[IO]]): IO[Response[IO]] =
     d.recorder.fold(err(ErrorCode.SkawauNotConfigured, "skawau との連携が設定されていません（SKAWAU_URL）"))(r => f(r.client))
 
-  private def withRecorder(
-    f: Recorder => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withRecorder(f: Recorder => IO[Response[IO]]): IO[Response[IO]] =
     d.recorder.fold(err(ErrorCode.RecordingStorageNotConfigured))(f)
 
-  private def linkDto(
-    u: User
-  ): IO[SkawauLinkDto] =
+  private def linkDto(u: User): IO[SkawauLinkDto] =
     links.token(u.id).map(t =>
       SkawauLinkDto(d.recorder.isDefined, d.recorder.map(_.client.cfg.url), t.isDefined, t.map(_._2.toString))
     )
 
-  private def answer[A](
-    r: Either[AppError, A]
-  )(
-    ok: A => IO[Response[IO]]
-  ): IO[Response[IO]] = r.fold(
-    fail,
-    ok
-  )
+  private def answer[A](r: Either[AppError, A])(ok: A => IO[Response[IO]]): IO[Response[IO]] = r.fold(fail, ok)
 
-  private def recording(
-    u: User,
-    id: UUID
-  )(
-    f: RecordingDto => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def recording(u: User, id: UUID)(f: RecordingDto => IO[Response[IO]]): IO[Response[IO]] =
     recordings.dto(u.id, id).flatMap(_.fold(err(ErrorCode.RecordingNotFound))(f))
 
-  private def roomOf(
-    code: String
-  ): IO[Option[(Room, UserBrief)]] = RoomCode.parse(code).fold(IO.pure(None))(d.rooms.byCode)
+  private def roomOf(code: String): IO[Option[(Room, UserBrief)]] =
+    RoomCode.parse(code).fold(IO.pure(None))(d.rooms.byCode)
 
 }

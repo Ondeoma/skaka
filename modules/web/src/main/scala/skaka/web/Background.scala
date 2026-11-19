@@ -35,14 +35,10 @@ object Background {
   def active: Boolean = mode.v != "none"
 
   /** 背景を変える（会議中でもすぐ反映）. */
-  def set(
-    m: String
-  ): Unit = { mode := m; Prefs.set("bg", m); Meeting.applyBackground() }
+  def set(m: String): Unit = { mode := m; Prefs.set("bg", m); Meeting.applyBackground() }
 
   /** 自分の画像を選んだ: 1280×720 に収まるよう切り取って JPEG にし、この端末に保存して使う. */
-  def upload(
-    file: dom.File
-  ): Unit = {
+  def upload(file: dom.File): Unit = {
     val url = dom.URL.createObjectURL(file)
     load(url).foreach { img =>
       dom.URL.revokeObjectURL(url)
@@ -72,9 +68,7 @@ object Background {
   private val Small = 256 // 切り抜きにかける映像の幅（小さいほど速い. 縁は拡大するときになめらかになる）
 
   /** カメラのトラックから送るトラックを作る. 背景なし・使えないときはカメラのまま. */
-  def attach(
-    camera: js.Dynamic
-  ): Future[js.Dynamic] =
+  def attach(camera: js.Dynamic): Future[js.Dynamic] =
     if (!active) { detach(); Future.successful(camera) }
     else {
       loading := true
@@ -118,9 +112,7 @@ object Background {
       }
   }
 
-  private def load(
-    url: String
-  ): Future[dom.HTMLImageElement] = {
+  private def load(url: String): Future[dom.HTMLImageElement] = {
     val p = Promise[dom.HTMLImageElement]()
     val img = dom.document.createElement("img").asInstanceOf[dom.HTMLImageElement]
     img.onload = (_: dom.Event) => p.trySuccess(img)
@@ -140,12 +132,7 @@ object Background {
     }
   }
 
-  private def cover(
-    g: js.Dynamic,
-    image: dom.HTMLImageElement,
-    w: Double,
-    h: Double
-  ): Unit = {
+  private def cover(g: js.Dynamic, image: dom.HTMLImageElement, w: Double, h: Double): Unit = {
     val img = image.asInstanceOf[js.Dynamic]
     val (iw, ih) = (img.width.asInstanceOf[Double], img.height.asInstanceOf[Double])
     val k = math.max(w / iw, h / ih)
@@ -157,11 +144,7 @@ object Background {
     (c, c.getContext("2d").asInstanceOf[js.Dynamic])
   }
 
-  private def start(
-    seg: js.Dynamic,
-    camera: js.Dynamic,
-    img: Option[dom.HTMLImageElement]
-  ): js.Dynamic = {
+  private def start(seg: js.Dynamic, camera: js.Dynamic, img: Option[dom.HTMLImageElement]): js.Dynamic = {
     detach()
     val video = dom.document.createElement("video").asInstanceOf[dom.HTMLVideoElement]
     video.muted = true

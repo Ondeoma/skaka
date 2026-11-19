@@ -9,15 +9,11 @@ import scala.util.Try
 object Sound {
   val enabled: RV[Boolean] = RV(Prefs.get("sound", "true") == "true")
 
-  def set(
-    v: Boolean
-  ): Unit = { enabled := v; Prefs.set("sound", v.toString) }
+  def set(v: Boolean): Unit = { enabled := v; Prefs.set("sound", v.toString) }
 
   private lazy val ctx: Option[js.Dynamic] = Try(js.Dynamic.newInstance(js.Dynamic.global.AudioContext)()).toOption
 
-  def play(
-    kind: String
-  ): Unit = if (enabled.v) ctx.foreach { c =>
+  def play(kind: String): Unit = if (enabled.v) ctx.foreach { c =>
     Try {
       if (c.state.asInstanceOf[String] == "suspended") c.resume()
       val notes = kind match {
@@ -27,10 +23,7 @@ object Sound {
         case _ => List(880.0)
       }
       notes.zipWithIndex.foreach {
-        (
-          f,
-          i
-        ) =>
+        (f, i) =>
           val t = c.currentTime.asInstanceOf[Double] + i * 0.12
           val osc = c.createOscillator()
           val g = c.createGain()

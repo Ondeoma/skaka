@@ -10,9 +10,7 @@ import org.http4s.*
  * 話した人の画面が、自分のマイクの音を話の切れ目ごとに送る（メッシュなので、音声は最初から人ごとに分かれている. 話者を推定しなくてよい）.
  * 文字にできたら、会議室の全員に字幕として送り、会議の記録に残す. ゲストも送れるよう、ログインではなく鍵で確かめる.
  */
-final class SpeechRoutes(
-  hub: Hub,
-  stt: SpeechToText) extends org.http4s.dsl.Http4sDsl[IO] {
+final class SpeechRoutes(hub: Hub, stt: SpeechToText) extends org.http4s.dsl.Http4sDsl[IO] {
   import org.http4s.circe.CirceEntityCodec.*
   import skaka.shared.*
 
@@ -20,10 +18,7 @@ final class SpeechRoutes(
     case req @ POST -> Root / "api" / "speech" / key => postSpeech(req, key)
   }
 
-  private def postSpeech(
-    req: Request[IO],
-    key: String
-  ): IO[Response[IO]] = {
+  private def postSpeech(req: Request[IO], key: String): IO[Response[IO]] = {
     val mime = req.contentType.map(c => s"${c.mediaType.mainType}/${c.mediaType.subType}".toLowerCase).getOrElse("")
     val ago = req.params.get("ago").flatMap(_.toLongOption).getOrElse(0L).max(0L).min(120000L)
     hub.speaker(key).flatMap {
@@ -63,8 +58,6 @@ final class SpeechRoutes(
     }
   }
 
-  private def err(
-    code: ErrorCode,
-    detail: String | Null = null
-  ): IO[Response[IO]] = sbirds.http.Errors.respond(sbirds.shared.AppError(code, Option(detail)))
+  private def err(code: ErrorCode, detail: String | Null = null): IO[Response[IO]] =
+    sbirds.http.Errors.respond(sbirds.shared.AppError(code, Option(detail)))
 }

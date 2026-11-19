@@ -16,11 +16,7 @@ object Ticker {
     new dom.BlobPropertyBag { `type` = "text/javascript" }
   ))
 
-  def every(
-    ms: Int
-  )(
-    f: () => Unit
-  ): () => Unit = {
+  def every(ms: Int)(f: () => Unit): () => Unit = {
     val w = new dom.Worker(src)
     w.onmessage = (_: dom.MessageEvent) => f()
     w.postMessage(ms)
