@@ -103,7 +103,12 @@ def removeAvatar(): Unit =
       <p><PushToggle /></p>
       <p class="muted small">待機室で待っている人がいるとき（自分の会議室に入っていないとき）、skuaka の予定に招待された会議が始まったとき、録画を保存したときに知らせます。</p>
     </section>
-    <SkuakaSettings v-if="Store.skuakaEnabled" />
+    <TokenLinkSettings v-if="Store.skuakaEnabled" service="skuaka" title="skuaka（カレンダー）との連携"
+      about="skuaka の予定と連携すると、ホームに今後の予定と会議室が並び、予定から会議に入れます。会議の予定を立てると、skuaka に予定を作って参加者を招待します。"
+      writeNeed="会議の予定を立てる" />
+    <TokenLinkSettings v-if="Store.skakapoEnabled" service="skakapo" title="skakapo（AI エージェント）との連携"
+      about="skakapo と連携すると、会議の記録の画面から、文字起こしとチャットをもとに議事録・要約を skakapo に作ってもらえます（あなたの skakapo の依頼になり、skakapo のクレジットを使います）。"
+      writeNeed="議事録を頼む" />
     <SkawauSettings v-if="Store.skawauEnabled" />
     <ApiTokenSettings />
     <section class="panel">

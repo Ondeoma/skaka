@@ -32,16 +32,6 @@ object RemoteJson:
 
   def bearer(token: String): Authorization = Authorization(Credentials.Token(AuthScheme.Bearer, token))
 
-/** skuaka の REST API を、ユーザーの skuaka の API トークンで呼ぶ. */
-final class SkuakaClient(val base: String, http: Client[IO]):
-
-  def call(token: String, method: Method, path: String, body: Option[Json] = None): IO[Either[(Int, String), Json]] =
-    Uri.fromString(base + path) match
-      case Left(e) => IO.pure(Left(500 -> e.message))
-      case Right(uri) =>
-        val req = Request[IO](method, uri).putHeaders(RemoteJson.bearer(token))
-        RemoteJson.run(http, body.fold(req)(req.withEntity(_)), "skuaka")
-
 /** 予定（skuaka の EventDto）から、変更の要求（EventReq）を作る. 知らない項目はそのまま渡す. */
 object SkuakaEvents:
   def toReq(e: Json, location: String): Json =
@@ -62,37 +52,12 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
   import d.{links, rooms, box, cfg}
   val sessions: SessionAuth = d.sessions
 
-  private type Res[A] = EitherT[IO, (Status, String), A]
+  /** トークンの登録と、登録したトークンで skuaka を呼ぶ補助（skakapo と共通）. */
+  val link = new TokenLinks(d.skuaka, links, box, d.sessions, "skuaka")
+  import link.{Res, fail, run, linked, writable}
 
-  private def fail[A](s: Status, m: String): Res[A] = EitherT.leftT(s -> m)
-
-  private def run(r: Res[Response[IO]]): IO[Response[IO]] = r.value.flatMap(_.fold((s, m) => err(s, m), IO.pure))
-
-  /** 連携の設定とトークン（なければ 409）. */
-  private def linked(u: User): Res[(SkuakaClient, String, SkuakaLink)] =
-    d.skuaka match
-      case None => fail(Status.ServiceUnavailable, "skuaka との連携が設定されていません（SKUAKA_URL）")
-      case Some(sk) =>
-        EitherT(links.get(u.id).map {
-          case None => Left(Status.Conflict -> "skuaka と連携していません。設定の画面で skuaka の API トークンを登録してください")
-          case Some(l) =>
-            box.open(l.tokenEnc).map(t => (sk, t, l))
-              .toRight(Status.Conflict -> "skuaka の API トークンを読めません（サーバーの SECRET_KEY が変わりました）。設定の画面で登録し直してください")
-        })
-
-  /** 読み書きのトークン（参照のみなら 403. what は断るときの文言の「〜を」）. */
-  private def writable(u: User, what: String): Res[(SkuakaClient, String)] =
-    linked(u).flatMap((c, t, l) =>
-      if l.canWrite then EitherT.rightT((c, t)) else fail(Status.Forbidden, s"skuaka の API トークンが参照のみのため、${what}変えられません"))
-
-  /** skuaka を呼ぶ（401 なら登録し直しを促す）. */
   private def sk(c: SkuakaClient, token: String, method: Method, path: String, body: Option[Json] = None): Res[Json] =
-    EitherT(c.call(token, method, path, body).map(_.left.map {
-      case (401, _) => Status.Conflict -> "skuaka の API トークンが使えません（失効・期限切れ）。設定の画面で登録し直してください"
-      case (403, m) => Status.Forbidden -> s"skuaka: $m"
-      case (404, m) => Status.NotFound -> s"skuaka: $m"
-      case (_, m)   => Status.BadGateway -> s"skuaka: $m"
-    }))
+    link.call(c, token, method, path, body)
 
   private def enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
@@ -176,42 +141,12 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
       }.toOption
     }
 
-  /** API トークンを確かめる: 持ち主の名前と、書けるか（参照のみのトークンは PATCH /api/me が 403）. */
-  private def verify(c: SkuakaClient, token: String): IO[Either[String, (String, Boolean)]] =
-    c.call(token, Method.GET, "/api/me").flatMap {
-      case Left((401, _)) => IO.pure(Left("skuaka の API トークンが正しくないか、期限が切れています"))
-      case Left((_, m))   => IO.pure(Left(s"skuaka: $m"))
-      case Right(me) =>
-        c.call(token, Method.PATCH, "/api/me", Some(Json.obj())).map(w => Right(me.hcursor.get[String]("name").getOrElse("") -> w.isRight))
-    }
-
-  private def linkDto(u: User): IO[SkuakaLinkDto] =
-    links.get(u.id).map(l => SkuakaLinkDto(d.skuaka.isDefined, d.skuaka.map(_.base), l.isDefined, l.map(_.account), l.map(_.prefix), l.exists(_.canWrite)))
-
   /** skuaka の予定に会議室を付けた・会議の予定を立てた数（メトリクス）. */
   private def count(action: String): IO[Unit] = skaka.observe.Metrics.count("skaka.skuaka.events", "action" -> action)
 
   private def date(s: Option[String]): Option[LocalDate] = s.flatMap(x => Try(LocalDate.parse(x)).toOption)
 
-  val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> Root / "api" / "skuaka" => authed(req)(u => linkDto(u).flatMap(Ok(_)))
-
-    case req @ PUT -> Root / "api" / "skuaka" =>
-      interactive(req)(u => body[SkuakaLinkReq](req) { r =>
-        val token = r.token.trim
-        d.skuaka match
-          case None => err(Status.ServiceUnavailable, "skuaka との連携が設定されていません（SKUAKA_URL）")
-          case Some(_) if !token.startsWith("skuaka_") => err(Status.BadRequest, "skuaka の API トークン（skuaka_ で始まる値）を入れてください")
-          case Some(c) =>
-            verify(c, token).flatMap {
-              case Left(m) => err(Status.BadRequest, m)
-              case Right((name, write)) =>
-                links.set(u.id, SkuakaLink(box.seal(token), token.take(13), name, write)) *> linkDto(u).flatMap(Ok(_))
-            }
-      })
-
-    case req @ DELETE -> Root / "api" / "skuaka" => interactive(req)(u => links.delete(u.id) *> NoContent())
-
+  val routes: HttpRoutes[IO] = link.routes <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "api" / "skuaka" / "events" =>
       authed(req) { u =>
         val tz   = param(req, "tz").filter(z => Try(ZoneId.of(z)).isSuccess).getOrElse(zone(u).getId)

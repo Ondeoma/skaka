@@ -11,8 +11,8 @@ import java.time.Instant
 import java.util.UUID
 import scala.concurrent.duration.*
 
-/** 入るための切符（POST /api/rooms/{code}/join で発行し、WebSocket の接続で1回だけ使う）. */
-final case class Ticket(room: Room, user: Option[User], guestName: Option[String], expires: Instant)
+/** 入るための切符（POST /api/rooms/{code}/join で発行し、WebSocket の接続で1回だけ使う）. key は会議中に文字起こしの音声を送るときの鍵. */
+final case class Ticket(room: Room, user: Option[User], guestName: Option[String], expires: Instant, key: String = "")
 
 /**
  * 会議中の状態（メモリ上. このノードの会議室だけ）. 状態の変化は Conference の純粋な関数で行い、
@@ -23,15 +23,18 @@ final class Hub private (
     tickets: Ref[IO, Map[String, Ticket]],
     dbq: Queue[IO, Effect],
     meetings: MeetingStore,
-    notices: Notices
+    notices: Notices,
+    transcription: Boolean
 ):
   import Hub.State
 
   // ---------------------------------------------------------------- 切符
 
-  def issue(t: Ticket): IO[String] =
-    val id = skaka.auth.Crypto.randomToken(24)
-    IO.realTimeInstant.flatMap(now => tickets.update(m => m.filter(_._2.expires.isAfter(now)).updated(id, t))).as(id)
+  /** 切符を発行する: (切符, 音声を送るときの鍵). */
+  def issue(t: Ticket): IO[(String, String)] =
+    val id  = skaka.auth.Crypto.randomToken(24)
+    val key = skaka.auth.Crypto.randomToken(24)
+    IO.realTimeInstant.flatMap(now => tickets.update(m => m.filter(_._2.expires.isAfter(now)).updated(id, t.copy(key = key)))).as(id -> key)
 
   private def take(id: String): IO[Option[Ticket]] =
     IO.realTimeInstant.flatMap(now => tickets.modify(m => (m - id, m.get(id).filter(_.expires.isAfter(now)))))
@@ -51,7 +54,8 @@ final class Hub private (
                    host = false, guest = t.user.isEmpty, MediaState(audio = false, video = false), now.toString)
           ba <- runWith { s =>
                  val live = s.lives.getOrElse(t.room.id, Live(t.room.id, t.room.ownerId, t.room.lobby))
-                 val s1   = s.copy(conns = s.conns.updated(id, q), roomOf = s.roomOf.updated(id, t.room.id), seen = s.seen.updated(id, now))
+                 val s1   = s.copy(conns = s.conns.updated(id, q), roomOf = s.roomOf.updated(id, t.room.id), seen = s.seen.updated(id, now),
+                   keys = s.keys.updated(t.key, id))
                  apply(s1, t.room.id, Conference.arrive(live, peer, now, () => UUID.randomUUID()))
                }
           (before, after) = ba
@@ -69,7 +73,12 @@ final class Hub private (
         IO.whenA(started)(notices.started(room, l.peers.flatMap(_.userId).toSet).start.void)
     }
 
-  def receive(peer: String, msg: ClientMsg): IO[Unit] =
+  def receive(peer: String, msg: ClientMsg): IO[Unit] = msg match
+    case ClientMsg.Transcribe(true) if !transcription =>
+      run(s => (s, List(Effect.Send(peer, ServerMsg.Error("文字起こしは使えません（サーバーに Whisper が設定されていません）")))))
+    case _ => handle(peer, msg)
+
+  private def handle(peer: String, msg: ClientMsg): IO[Unit] =
     IO.realTimeInstant.flatMap(now => run { s0 =>
       val s = s0.copy(seen = if s0.conns.contains(peer) then s0.seen.updated(peer, now) else s0.seen)
       s.roomOf.get(peer).flatMap(r => s.lives.get(r).map(r -> _)) match
@@ -86,7 +95,7 @@ final class Hub private (
   /** 接続が切れた（何度呼んでもよい）. */
   def disconnect(peer: String): IO[Unit] =
     IO.realTimeInstant.flatMap(now => run { s =>
-      val s1 = s.copy(conns = s.conns - peer, roomOf = s.roomOf - peer, seen = s.seen - peer)
+      val s1 = s.copy(conns = s.conns - peer, roomOf = s.roomOf - peer, seen = s.seen - peer, keys = s.keys.filterNot(_._2 == peer))
       s.roomOf.get(peer).flatMap(r => s.lives.get(r).map(r -> _)) match
         case Some((r, live)) => apply(s1, r, Conference.leave(live, peer, now))
         case None            => (s1, Nil)
@@ -101,6 +110,20 @@ final class Hub private (
   /** 録画が始まった・終わったことを、会議室の全員に知らせる. */
   def recording(roomId: UUID, notice: Option[RecordingNotice], id: UUID): IO[Unit] =
     run(s => s.lives.get(roomId).fold((s, Nil))(l => apply(s, roomId, Conference.recording(l, notice, id))))
+
+  /** 文字起こしの1行を、会議室の全員に送って保存する（文字起こし中のときだけ）. */
+  def caption(roomId: UUID, line: TranscriptLine): IO[Unit] =
+    IO.realTimeInstant.flatMap(now => run(s => s.lives.get(roomId).fold((s, Nil))(l => apply(s, roomId, Conference.caption(l, line, now)))))
+
+  /** 音声を送ってきた参加者（key は切符と一緒に発行した鍵. 会議に入っている間だけ使える）: (会議室, いまの会議, 参加者). */
+  def speaker(key: String): IO[Option[(UUID, Live, PeerInfo)]] = cell.get.map { s =>
+    for
+      peer <- s.keys.get(key)
+      room <- s.roomOf.get(peer)
+      live <- s.lives.get(room)
+      p    <- live.peer(peer)
+    yield (room, live, p)
+  }
 
   /** 会議室を消した: 全員を退出させる. */
   def close(roomId: UUID, reason: String): IO[Unit] = run { s =>
@@ -145,18 +168,22 @@ final class Hub private (
     }
 
 object Hub:
-  /** lives: 会議室 → いまの会議. conns: 接続 → 送るキュー. roomOf: 接続 → 会議室. seen: 接続 → 最後に何か届いた時刻. */
+  /**
+   * lives: 会議室 → いまの会議. conns: 接続 → 送るキュー. roomOf: 接続 → 会議室. seen: 接続 → 最後に何か届いた時刻.
+   * keys: 切符と一緒に発行した鍵 → 接続（文字起こしの音声を送るときに使う. 本人の画面しか知らない）.
+   */
   final case class State(lives: Map[UUID, Live] = Map.empty, conns: Map[String, Queue[IO, Option[ServerMsg]]] = Map.empty,
-                         roomOf: Map[String, UUID] = Map.empty, seen: Map[String, Instant] = Map.empty)
+                         roomOf: Map[String, UUID] = Map.empty, seen: Map[String, Instant] = Map.empty, keys: Map[String, String] = Map.empty)
 
   /** Hub と、DB に履歴を書く裏の処理. */
-  def resource(rooms: RoomStore, meetings: MeetingStore, notices: Notices = Notices.none): Resource[IO, Hub] =
+  /** transcription は文字起こし（Whisper）が使えるか. */
+  def resource(rooms: RoomStore, meetings: MeetingStore, notices: Notices = Notices.none, transcription: Boolean = false): Resource[IO, Hub] =
     for
       cell    <- Resource.eval(AtomicCell[IO].of(State()))
       tickets <- Resource.eval(Ref.of[IO, Map[String, Ticket]](Map.empty))
       q       <- Resource.eval(Queue.unbounded[IO, Effect])
       _       <- writer(q, rooms, meetings).foreverM.background
-      hub      = new Hub(cell, tickets, q, meetings, notices)
+      hub      = new Hub(cell, tickets, q, meetings, notices, transcription)
       _       <- (IO.sleep(30.seconds) *> hub.reap(Silent)).foreverM.background
     yield hub
 
@@ -170,6 +197,7 @@ object Hub:
         count("skaka.participants.joined", "guest" -> p.guest.toString) *> meetings.joined(row, m, p.userId, p.name, p.guest, at)
       case Effect.LeftMeeting(row, at)       => count("skaka.participants.left") *> meetings.left(row, at)
       case Effect.SaveChat(m, msg, at)       => count("skaka.chat.messages") *> meetings.chat(m, msg, at)
+      case Effect.SaveTranscript(m, line, _) => count("skaka.transcript.lines") *> meetings.transcript(m, line)
       case _                                 => IO.unit
     }.handleErrorWith(e => skaka.observe.Log.println(s"[skaka] failed to write meeting history: $e"))
 

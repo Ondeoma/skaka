@@ -15,16 +15,18 @@ enum Effect:
   case Joined(rowId: UUID, meetingId: UUID, peer: PeerInfo, at: Instant)
   case LeftMeeting(rowId: UUID, at: Instant)
   case SaveChat(meetingId: UUID, msg: ChatMsg, at: Instant)
+  case SaveTranscript(meetingId: UUID, line: TranscriptLine, at: Instant)
 
 /**
  * 1つの会議室のいまの会議（メモリ上. 純粋な関数で変える）.
  * peers は入っている人、waiting は待機室の人. rows は参加者の履歴の行の id（参加者 → 行）. hostUsers は主催者にされた人
  * （出入りしても主催者のまま）. recording は録画中であること（録画そのものは録画する人の画面とサーバーの Recorder が行う）.
+ * transcribing は文字起こし中であること（音声は話す人の端末が送り、サーバーの Transcriber が文字にする）.
  */
 final case class Live(roomId: UUID, ownerId: UUID, lobbyAll: Boolean, meetingId: Option[UUID] = None, startedAt: Option[Instant] = None,
                       locked: Boolean = false, peers: Vector[PeerInfo] = Vector.empty, waiting: Vector[PeerInfo] = Vector.empty,
                       chat: Vector[ChatMsg] = Vector.empty, rows: Map[String, UUID] = Map.empty, hostUsers: Set[UUID] = Set.empty,
-                      recording: Option[RecordingNotice] = None):
+                      recording: Option[RecordingNotice] = None, transcribing: Option[TranscribeNotice] = None):
   def isEmpty: Boolean = peers.isEmpty && waiting.isEmpty
   def peer(id: String): Option[PeerInfo] = peers.find(_.id == id)
   def hostPresent: Boolean = peers.exists(_.host)
@@ -74,7 +76,7 @@ object Conference:
       rows = l.rows.updated(peer.id, row))
     val fx = startFx ++ List(
       Effect.Joined(row, mid, peer, now),
-      Effect.Send(peer.id, ServerMsg.Welcome(peer, l.peers.toList, l.chat.toList, l2.locked, started.toString, l2.recording))
+      Effect.Send(peer.id, ServerMsg.Welcome(peer, l.peers.toList, l.chat.toList, l2.locked, started.toString, l2.recording, l2.transcribing))
     ) ++ others(l2, peer.id, ServerMsg.Joined(peer))
     // 入れられる人が変わったかもしれない（主催者が来た・最初のメンバーが来た）
     (l2, fx ++ (if l2.waiting.nonEmpty then lobbyNotice(l2) else Nil))
@@ -91,7 +93,8 @@ object Conference:
       if l2.peers.isEmpty then
         val end = l.meetingId.map(Effect.EndMeeting(_, now)).toList
         // 待機室の人だけが残ったら、会議の続きはない（次に入った人から新しい会議）
-        (l2.copy(meetingId = None, startedAt = None, locked = false, chat = Vector.empty, hostUsers = Set.empty, recording = None),
+        (l2.copy(meetingId = None, startedAt = None, locked = false, chat = Vector.empty, hostUsers = Set.empty, recording = None,
+          transcribing = None),
           row ++ end ++ to(l2.waiting, ServerMsg.Waiting(false)))
       else (l2, row ++ to(l2.peers, ServerMsg.Left(id)) ++ (if l2.waiting.nonEmpty then lobbyNotice(l2) else Nil))
 
@@ -99,6 +102,12 @@ object Conference:
   def recording(l: Live, notice: Option[RecordingNotice], id: UUID): R =
     if notice.isEmpty && !l.recording.exists(_.id == id) then (l, Nil)
     else (l.copy(recording = notice), to(l.peers, ServerMsg.Recording(notice)))
+
+  /** 文字起こしの1行: 文字起こし中なら、全員に送って保存する. */
+  def caption(l: Live, line: TranscriptLine, now: Instant): R =
+    (l.transcribing, l.meetingId) match
+      case (Some(_), Some(m)) if l.peer(line.peer).isDefined => (l, Effect.SaveTranscript(m, line, now) :: to(l.peers, ServerMsg.Caption(line)))
+      case _                                                 => (l, Nil)
 
   /** 参加者からのメッセージ. */
   def handle(l: Live, from: String, msg: ClientMsg, now: Instant, fresh: () => UUID): R =
@@ -195,6 +204,13 @@ object Conference:
 
     case ClientMsg.Lock(locked) => hostOnly(l, me) {
         (l.copy(locked = locked), to(l.peers, ServerMsg.Locked(locked, me.name)))
+      }
+
+    case ClientMsg.Transcribe(on) => hostOnly(l, me) {
+        if on == l.transcribing.isDefined then (l, Nil)
+        else
+          val n = Option.when(on)(TranscribeNotice(me.name, now.toString))
+          (l.copy(transcribing = n), to(l.peers, ServerMsg.Transcribing(n)))
       }
 
     case ClientMsg.EndAll() => hostOnly(l, me) {

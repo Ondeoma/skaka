@@ -21,7 +21,9 @@ object SafePath {
 }
 
 /** skuaka・skawau はそれぞれ連携する skuaka（カレンダー）・skawau（ファイル共有. 録画の保存先）の URL（連携しなければ None）. */
-final case class ClientConfigDto(devLogin: Boolean, oidc: Boolean, version: String, skuaka: Option[String], skawau: Option[String] = None)
+/** transcription は文字起こし（Whisper）が使えるか、skakapo は議事録を頼む skakapo の URL. */
+final case class ClientConfigDto(devLogin: Boolean, oidc: Boolean, version: String, skuaka: Option[String], skawau: Option[String] = None,
+                                 transcription: Boolean = false, skakapo: Option[String] = None)
     derives ConfiguredCodec
 
 final case class UserBrief(id: UUID, name: String, email: Option[String], avatarUrl: Option[String]) derives Encoder.AsObject, Decoder
@@ -91,7 +93,8 @@ final case class IceServer(urls: List[String], username: Option[String] = None, 
     derives ConfiguredCodec
 
 /** 入るための切符（WebSocket /ws/{ticket} で使う. 1回だけ・60秒）. */
-final case class JoinDto(ticket: String, iceServers: List[IceServer]) derives Encoder.AsObject, Decoder
+/** ticket は WebSocket /ws/{ticket} に1回だけ使う. key は会議中に文字起こしの音声を送るときの鍵（URL に載せないよう別にしてある）. */
+final case class JoinDto(ticket: String, iceServers: List[IceServer], key: String = "") derives ConfiguredCodec
 
 /** いま入っている人（会議室の一覧・MCP 用）. */
 final case class LiveDto(code: String, peers: List[PeerInfo], waiting: Int, locked: Boolean, startedAt: Option[String])
@@ -107,7 +110,40 @@ final case class ParticipantDto(name: String, userId: Option[UUID], guest: Boole
     derives Encoder.AsObject, Decoder
 
 final case class MeetingDetailDto(meeting: MeetingDto, participants: List[ParticipantDto], chat: List[ChatMsg],
-                                  recordings: List[RecordingDto] = Nil) derives ConfiguredCodec
+                                  recordings: List[RecordingDto] = Nil, transcript: List[TranscriptLine] = Nil,
+                                  minutes: List[MinutesDto] = Nil) derives ConfiguredCodec
+
+// ------------------------------------------------------------------ 議事録・要約（skakapo に頼む）
+
+/**
+ * 議事録・要約. status は running（skakapo が作っている）・done・failed. sessionUrl は skakapo の会話（続けて直してもらえる）.
+ * fileUrl は skawau に置いたファイル（頼んだ人の skawau. 参加者と共有）、fileError は置けなかった理由.
+ */
+final case class MinutesDto(id: UUID, by: String, mine: Boolean, status: String, body: String, error: Option[String], sessionUrl: String,
+                            createdAt: String, updatedAt: String, fileUrl: Option[String] = None, fileError: Option[String] = None)
+    derives ConfiguredCodec
+
+/** 会議の記録を Markdown にする（画面のコピー・ダウンロードと、skakapo に渡す文字起こしで共通. time は時刻の書き方）. */
+object MeetingText {
+  def markdown(d: MeetingDetailDto, title: String, time: String => String): String = {
+    def span(p: ParticipantDto) = s"${time(p.joinedAt)}〜${p.leftAt.fold("")(time)}"
+    val head = List(s"# $title", "", "## 参加者") ++ d.participants.map(p => s"- ${p.name}${if (p.guest) "（ゲスト）" else ""} ${span(p)}")
+    val tr   = if (d.transcript.isEmpty) Nil else "" :: "## 文字起こし" :: d.transcript.map(t => s"[${time(t.at)}] ${t.name}: ${t.text}")
+    val chat = "" :: "## チャット" :: (if (d.chat.isEmpty) List("（なし）") else d.chat.map(c => s"[${time(c.at)}] ${c.name}: ${c.text}"))
+    (head ++ tr ++ chat).mkString("\n")
+  }
+}
+
+object MinutesStatus {
+  val Running = "running"
+  val Done    = "done"
+  val Failed  = "failed"
+  def label(s: String): String = s match {
+    case Running => "作っています"
+    case Done    => "できました"
+    case _       => "失敗"
+  }
+}
 
 // ------------------------------------------------------------------ 録画（保存先は skawau）
 
@@ -144,11 +180,12 @@ final case class SkawauLinkDto(available: Boolean, url: Option[String], linked: 
 // ------------------------------------------------------------------ skuaka（カレンダー）との連携
 
 /** 連携の状態. account は skuaka での名前、prefix はトークンの先頭（画面の表示用）. */
-final case class SkuakaLinkDto(available: Boolean, url: Option[String], linked: Boolean, account: Option[String], prefix: Option[String],
+/** API トークンでの連携（skuaka・skakapo）. */
+final case class TokenLinkDto(available: Boolean, url: Option[String], linked: Boolean, account: Option[String], prefix: Option[String],
                                canWrite: Boolean) derives Encoder.AsObject, Decoder
 
 /** skuaka の API トークンを登録する. */
-final case class SkuakaLinkReq(token: String) derives Encoder.AsObject, Decoder
+final case class TokenLinkReq(token: String) derives Encoder.AsObject, Decoder
 
 /** skuaka の予定（1回分）. room はその予定の会議室（場所・説明に skaka の URL があれば）. */
 final case class UpcomingDto(eventId: UUID, title: String, location: String, allDay: Boolean, start: String, end: String, recurring: Boolean,

@@ -155,13 +155,14 @@ object Check:
 
 /**
  * 応答の安全のための共通の処理: リクエストの本文の大きさの上限と、セキュリティのヘッダー.
- * 本文は録画の断片だけ大きくてよく、ほかは JSON・フォームなので 1MB まで（メモリを使い切らせない）.
+ * 本文は録画の断片・文字起こしの音声だけ大きくてよく、ほかは JSON・フォームなので 1MB まで（メモリを使い切らせない）.
  */
 object Guard:
   val MaxBody: Long = 1024 * 1024
 
   private def limitOf(req: Request[IO]): Long = req.pathInfo.segments.map(_.decoded()).toList match
     case "api" :: "recordings" :: _ :: "chunks" :: _ :: Nil => Recorder.MaxChunk.toLong
+    case "api" :: "speech" :: _ :: Nil                    => Transcriber.MaxBytes.toLong
     case _                                                => MaxBody
 
   // IdP が http（開発環境など）のときは、そのアイコンの画像も許す（https の画像はもとから許している）
@@ -206,14 +207,17 @@ final class BodyTooLarge extends RuntimeException("リクエストが大きす�
 
 /** アプリのルートをまとめる（REST API・会議の WebSocket・MCP）. MCP は REST API をトークンで内部から呼ぶ. */
 object ApiRoutes:
-  /** recorder は skawau（録画の保存先）を設定したときだけ. */
+  /** recorder は skawau（録画の保存先）、stt は Whisper（文字起こし）、minutes は skakapo（議事録）を設定したときだけ. */
   final case class Deps(oidc: Option[skaka.auth.OidcClient], users: UserStore, rooms: RoomStore, meetings: MeetingStore, links: LinkStore,
                         hub: Hub, skuaka: Option[SkuakaClient], box: skaka.auth.SecretBox, sessions: SessionAuth, cfg: ApiConfig,
-                        recordings: RecordingStore, skawauLinks: SkawauStore, oauth: OAuthStore, recorder: Option[Recorder] = None)
+                        recordings: RecordingStore, skawauLinks: SkawauStore, oauth: OAuthStore, recorder: Option[Recorder] = None,
+                        stt: Option[SpeechToText] = None, minutes: Option[MinutesService] = None)
 
   /** REST API と MCP（WebSocket は SignalRoutes）. */
   def apply(d: Deps): HttpRoutes[IO] =
     val rooms = new RoomRoutes(d)
     val rest = new AuthRoutes(d).routes <+> rooms.routes <+> new SkuakaRoutes(d, rooms).routes <+> new SkawauRoutes(d).routes <+>
-      new OAuthRoutes(d.oauth, d.cfg.oauthClients, d.sessions, d.cfg).routes
+      new OAuthRoutes(d.oauth, d.cfg.oauthClients, d.sessions, d.cfg).routes <+>
+      d.minutes.fold(HttpRoutes.empty[IO])(new MinutesRoutes(_, d.sessions).routes) <+>
+      d.stt.fold(HttpRoutes.empty[IO])(new SpeechRoutes(d.hub, _).routes)
     rest <+> new McpRoutes(rest, d.sessions, d.cfg.publicUrl, d.cfg.version).routes

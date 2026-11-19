@@ -24,6 +24,13 @@ final case class ChatMsg(id: String, from: String, name: String, userId: Option[
 /** 録画中であること（参加者全員に知らせる）. */
 final case class RecordingNotice(id: UUID, by: String, startedAt: String) derives Encoder.AsObject, Decoder
 
+/** 文字起こし中であること（主催者が始める. 参加者全員に知らせる）. */
+final case class TranscribeNotice(by: String, startedAt: String) derives Encoder.AsObject, Decoder
+
+/** 文字起こしの1行（話した人の端末が送った音声を、サーバーが Whisper で文字にしたもの）. at は話し始めた時刻. */
+final case class TranscriptLine(id: String, peer: String, name: String, userId: Option[UUID], text: String, at: String)
+    derives Encoder.AsObject, Decoder
+
 object Reactions {
   val all: List[String] = List("👍", "👏", "😂", "🎉", "❤️", "😮", "🙏", "🤔")
 }
@@ -44,6 +51,8 @@ enum ClientMsg derives ConfiguredCodec {
   case Deny(target: String)
   case SetHost(target: String, host: Boolean)
   case Lock(locked: Boolean)
+  /** 文字起こしを始める・止める. */
+  case Transcribe(on: Boolean)
   /** 全員を退出させて会議を終える. */
   case EndAll()
   case Ping()
@@ -53,7 +62,7 @@ enum ClientMsg derives ConfiguredCodec {
 enum ServerMsg derives ConfiguredCodec {
   /** 入れた. peers は自分以外の参加者、chat はこれまでの全員宛のチャット. */
   case Welcome(self: PeerInfo, peers: List[PeerInfo], chat: List[ChatMsg], locked: Boolean, startedAt: String,
-               recording: Option[RecordingNotice] = None)
+               recording: Option[RecordingNotice] = None, transcribing: Option[TranscribeNotice] = None)
   /** 待機室で主催者の許可を待っている. */
   case Waiting(hostPresent: Boolean)
   /** 入れなかった・退出させられた・会議が終わった（reason は表示の文言）. */
@@ -74,6 +83,10 @@ enum ServerMsg derives ConfiguredCodec {
   case Locked(locked: Boolean, by: String)
   /** 録画が始まった（Some）・終わった（None）. */
   case Recording(info: Option[RecordingNotice])
+  /** 文字起こしが始まった（Some）・終わった（None）. */
+  case Transcribing(info: Option[TranscribeNotice])
+  /** 文字起こしの1行（字幕）. */
+  case Caption(line: TranscriptLine)
   case Pong()
   case Error(message: String)
 }

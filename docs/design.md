@@ -14,7 +14,7 @@ skuaka と同じ（兄弟のシステムで揃えている）.
 
 ### 応答の守り（`Guard`）
 
-- リクエストの本文は 1MB まで（録画の断片だけ 32MB まで）. Content-Length がなくても上限で読むのをやめる. 会議の WebSocket の1つのメッセージは 64KB まで.
+- リクエストの本文は 1MB まで（録画の断片だけ 32MB まで、文字起こしの音声は 2MB まで）. Content-Length がなくても上限で読むのをやめる. 会議の WebSocket の1つのメッセージは 64KB まで.
 - 会議中のメッセージは、1つの接続から10秒に3000件まで（チャット・リアクションは40件まで）. 超えた分は捨てる.
 - すべての応答に `X-Content-Type-Options: nosniff`・`Referrer-Policy: same-origin`（会議室の URL を他のサイトに渡さない）.
   HTML には `X-Frame-Options: DENY` と CSP（インラインのスクリプトは禁止. MediaPipe の WASM のため `wasm-unsafe-eval`、Worker の時計のため `blob:` だけを許す）.
@@ -112,6 +112,39 @@ skuaka と同じ（兄弟のシステムで揃えている）.
   失敗したら（skawau が止まっている・連携が切れた）一時ファイルを残して `failed` にし、録画した人が「もう一度保存」できる.
 - **見る**: 録画した人・会議室の持ち主・その会議に参加した人に、会議の記録の画面・`GET /api/recordings`・MCP の `list_recordings` で見せる.
   中身は skawau の `/view/{id}` で開く（skawau の権限で. 共有されていない人は開けない）. skaka の一覧から消しても skawau のファイルは消さない.
+
+## 文字起こし（自前の Whisper）
+
+- **始める**: 主催者が `ClientMsg.Transcribe(true)`. `Live.transcribing` に持ち、`ServerMsg.Transcribing` で全員に、後から入った人には `Welcome` で知らせる.
+  全員が出たら止まる. サーバーに `WHISPER_URL` がなければ断る（画面にも出さない）.
+- **音を拾う**: 文字起こし中は、各自のブラウザ（`Transcriber`）が自分のマイクのトラックだけを Web Audio で読み、話の切れ目ごとに切り出す.
+  音の大きさ（RMS）が周りの雑音（話していない間の大きさを覚える）の3倍（最低 0.015）を2回続けて超えたら話し始め. 直前の約0.3秒も含める.
+  0.9秒黙るか20秒続いたら区切り、話した時間が0.4秒より短いもの（咳など）は捨てる. 16kHz・16bit・モノラルの WAV にして送る（20秒で約 640KB）.
+  マイクを切っている間は送らない（サーバーでも、マイクを切った人の音声は文字にしない）.
+- **話者**: 映像・音声はメッシュで、音声は最初から人ごとに分かれている. 送った人がそのまま話した人になるので、話者の推定（diarization）は要らない.
+  同時に話しても混ざらない. ほかの人の声がスピーカーから回り込む分は、ブラウザのエコー除去が消す.
+- **送る**: `POST /api/speech/{key}?ago={話し始めてからの ms}`（本文は音声）. key は会議に入る切符（`POST /api/rooms/{code}/join`）と一緒に発行する鍵で、
+  WebSocket の URL には載せない（アクセスログに残らない）. 接続している間だけ使え、ゲストも送れる.
+- **文字にする**: Whisper の OpenAI 互換の API（`POST {WHISPER_URL}/audio/transcriptions`. model・language=ja・response_format=json・temperature=0）に
+  マルチパートで送る（大きさを付ける. chunked を読めないサーバーがある）. speaches・faster-whisper-server・LocalAI・whisper.cpp の server などが使える.
+  同時に送る数は `WHISPER_CONCURRENCY`（既定 2）. 待ちがその4倍を超えたら断る（遅れて届く字幕は役に立たない）. 接続の失敗は1回だけ送り直す.
+  無音や雑音から Whisper が作りがちな文（「ご視聴ありがとうございました」など）と、同じ音の繰り返しは捨てる（`Transcriber.clean`）.
+- **配る・残す**: 文字にできたら `ServerMsg.Caption`（話した人の名前・話し始めた時刻）で全員に送り、`transcript_line` に保存する.
+  画面は届いてから12秒の間、最後の3行を字幕として出す. 会議の記録の画面・Markdown の書き出しに「文字起こし」として出る.
+
+## 議事録・要約（skakapo）
+
+- **連携**: skakapo の API トークン（`skakapo_…`. 読み書き）を設定の画面で登録する（skuaka と同じ `TokenLinks`. `skakapo_link` に暗号化して保存）.
+- **頼む**: 会議の記録の画面の「skakapo で議事録を作る」（会議を見られる人なら誰でも）. 参加者・文字起こし・チャットを Markdown にして（`MeetingText`）
+  skakapo に添付し（`POST /api/attachments`）、依頼の種類 `SKAKAPO_REQUEST_TYPE`（既定「その他の依頼」）で会話を作る（`POST /api/sessions`）.
+  依頼の内容には、議事録の形式（要約・決まったこと・宿題・話し合ったこと・次回までに確かめること）と、ほかのサービスに書き込まないことを書く.
+- **取り込む**: 裏で skakapo の会話の出来事を読み（`GET /api/sessions/{id}/events`）、状態が `idle` になったら最後のエージェントの返事を `minutes` に保存する.
+  失敗（`failed`）なら最後のエラーの文を残す. 60分待っても終わらなければ、取り込み直しを促して終える. 起動したときに待っていたものは続きを見る.
+- **直す**: 返事に満足できなければ、skakapo の会話で直してもらい、skaka で「取り込み直す」（頼んだ人だけ. 最新の返事を取り込む）.
+- **skawau に置く**: 取り込んだら、頼んだ人の skawau（録画と同じ OAuth の連携）のルートの `skaka 議事録/yyyy-MM/議事録 {会議室の名前}（{日時}）.md` に置き、
+  会議に参加したメンバーと閲覧のみで共有する（録画と共通の `SkawauFiles`）. ファイルには議事録の本文と、skaka の会議の記録・skakapo の会話への案内を書く.
+  取り込み直したら、置いたファイルの中身を書き換える（`PUT /api/files/{id}/content`. skawau に版が残る. 移動・改名されていても同じファイル. 消されていたら置き直す）.
+  置けなかったら（skawau と連携していない・連携が切れた）理由を残し、頼んだ人が「skawau に保存」でもう一度置ける. skawau を設定していなければ置かない.
 
 ## API トークンと MCP
 

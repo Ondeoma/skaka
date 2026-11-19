@@ -30,7 +30,7 @@ def removeLabel(r: RoomDto): String = if (r.isOwner) "削除" else "一覧から
     <div class="ops">
       <button class="primary small" @click="props.onOpen(props.room)">入る</button>
       <button class="ghost small" title="URL をコピー" @click='Dom.copy(props.room.url, "会議室の URL をコピーしました")'>🔗</button>
-      <button v-if="props.room.isOwner" class="ghost small" title="設定" @click="Store.roomEditor := Some(Some(props.room))">⚙</button>
+      <button v-if="props.room.isOwner" class="ghost small gear" title="設定" aria-label="設定" @click="Store.roomEditor := Some(Some(props.room))"><span class="ico ico-gear"></span></button>
       <button v-if="!props.room.personal" class="ghost small" :title="removeLabel(props.room)" @click="props.onRemove(props.room)">✕</button>
     </div>
   </div>
@@ -47,5 +47,6 @@ def removeLabel(r: RoomDto): String = if (r.isOwner) "削除" else "一覧から
 .live { font-size: .75rem; color: var(--ok); font-weight: 600; }
 .badge { margin-left: .3rem; }
 .ev { margin-top: .15rem; color: var(--accent); }
+.gear .ico { width: 1.35rem; height: 1.35rem; vertical-align: middle; }
 .ops { display: flex; gap: .2rem; align-items: center; flex: none; }
 </style>

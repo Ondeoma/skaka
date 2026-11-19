@@ -27,6 +27,8 @@ object Store {
 
   def skuakaEnabled: Boolean = config.v.exists(_.skuaka.isDefined)
   def skawauEnabled: Boolean = config.v.exists(_.skawau.isDefined)
+  def transcriptionEnabled: Boolean = config.v.exists(_.transcription)
+  def skakapoEnabled: Boolean = config.v.exists(_.skakapo.isDefined)
 
   // ---------------------------------------------------------------- トースト
 

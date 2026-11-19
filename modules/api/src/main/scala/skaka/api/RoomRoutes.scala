@@ -111,8 +111,8 @@ final class RoomRoutes(d: ApiRoutes.Deps) extends RouteSupport:
             for
               now <- IO.realTimeInstant
               _   <- me.traverse_(u => rooms.visited(u.id, r.id))
-              t   <- hub.issue(Ticket(r, me, name, now.plusSeconds(Hub.TicketTtl.toSeconds)))
-              res <- Ok(JoinDto(t, cfg.ice.forPeer(me.fold("guest")(_.id.toString), now)))
+              tk  <- hub.issue(Ticket(r, me, name, now.plusSeconds(Hub.TicketTtl.toSeconds)))
+              res <- Ok(JoinDto(tk._1, cfg.ice.forPeer(me.fold("guest")(_.id.toString), now), tk._2))
             yield res
           }
       }))
@@ -129,7 +129,8 @@ final class RoomRoutes(d: ApiRoutes.Deps) extends RouteSupport:
 
     case req @ GET -> Root / "api" / "meetings" / UuidVar(id) =>
       authed(req)(u => meetings.detail(u.id, id).flatMap(_.fold(err(Status.NotFound, "会議が見つかりません"))(m =>
-        d.recordings.forMeeting(u.id, id).flatMap(rs => Ok(m.copy(recordings = rs))))))
+        (d.recordings.forMeeting(u.id, id), d.minutes.fold(IO.pure(List.empty[MinutesDto]))(_.forMeeting(u.id, id)))
+          .flatMapN((rs, ms) => Ok(m.copy(recordings = rs, minutes = ms))))))
   }
 
 /** 会議中のやり取り（WebSocket）. 切符は POST /api/rooms/{code}/join で発行する. */

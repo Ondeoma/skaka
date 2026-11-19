@@ -21,7 +21,8 @@ import skaka.shared.{ErrorDto, IceServer}
 import scala.concurrent.duration.*
 
 final case class AppConfig(port: Int, db: DbConfig, oidc: Option[OidcConfig], api: ApiConfig, staticDir: Option[String],
-                           skuakaUrl: Option[String], secretKey: Option[String], skawau: Option[SkawauConfig])
+                           skuakaUrl: Option[String], secretKey: Option[String], skawau: Option[SkawauConfig],
+                           whisper: Option[WhisperConfig] = None, skakapo: Option[SkakapoConfig] = None)
 
 /** 設定は環境変数から読む. */
 object Config:
@@ -84,7 +85,11 @@ object Config:
       staticDir = opt("STATIC_DIR"),
       skuakaUrl = opt("SKUAKA_URL").map(_.stripSuffix("/")),
       secretKey = opt("SECRET_KEY"),
-      skawau = skawau
+      skawau = skawau,
+      whisper = opt("WHISPER_URL").map(u => WhisperConfig(u.stripSuffix("/"), opt("WHISPER_MODEL").getOrElse("whisper-1"),
+        opt("WHISPER_LANGUAGE").getOrElse("ja"), opt("WHISPER_API_KEY"), int("WHISPER_CONCURRENCY").getOrElse(2).max(1).min(32), opt("WHISPER_PROMPT"))),
+      skakapo = opt("SKAKAPO_URL").map(u => SkakapoConfig(u.stripSuffix("/"), opt("SKAKAPO_INTERNAL_URL").getOrElse(u).stripSuffix("/"),
+        opt("SKAKAPO_REQUEST_TYPE").getOrElse("other")))
     )).left.map(new IllegalArgumentException(_))
   )
 
@@ -119,20 +124,33 @@ object Main extends IOApp.Simple:
         _   <- Resource.eval(IO.whenA(oidc.isEmpty)(skaka.observe.Log.println("[skaka] WARNING: OIDC が未設定です。開発用のログイン（DEV_LOGIN）を使います。本番では使わないでください")))
         box <- Resource.eval(cfg.secretKey match
                  case Some(k) => IO.pure(new SecretBox(k))
-                 case None => skaka.observe.Log.println("[skaka] WARNING: SECRET_KEY が未設定です。skuaka・skawau のトークンは再起動すると読めなくなります") *>
+                 case None => skaka.observe.Log.println("[skaka] WARNING: SECRET_KEY が未設定です。skuaka・skawau・skakapo のトークンは再起動すると読めなくなります") *>
                      IO(new SecretBox(Crypto.randomToken(32))))
         ended <- Resource.eval(IO.realTimeInstant.flatMap(meetings.endAll))
         _     <- Resource.eval(IO.whenA(ended > 0)(skaka.observe.Log.println(s"[skaka] closed $ended meeting(s) left open by the previous run")))
-        skuaka = cfg.skuakaUrl.map(new SkuakaClient(_, http))
+        skuaka = cfg.skuakaUrl.map(SkuakaClient(_, http))
         links  = new LinkStore(xa)
         pushStore = new skaka.push.PushStore(xa)
         push  <- Resource.eval(skaka.push.PushService.create(pushStore, http, cfg.api.publicUrl, "skaka"))
         notices = Notices(push, users, links, skuaka, box)
-        hub   <- Hub.resource(rooms, meetings, notices)
+        hub   <- Hub.resource(rooms, meetings, notices, transcription = cfg.whisper.isDefined)
+        // 文字起こし（自前の Whisper）. 音声を送ってから文字が返るまで待つ（長い音声でも切れないよう長めに）
+        // 使い回す接続は短めに捨てる（Whisper のサーバーが先に切っていると送れないため）
+        sttHttp <- EmberClientBuilder.default[IO].withTimeout(2.minutes).withIdleTimeInPool(3.seconds).build.map(HttpClientTelemetry(_))
+        stt   <- Resource.eval(cfg.whisper.traverse(WhisperClient.create(_, sttHttp)))
+        _     <- Resource.eval(cfg.whisper.traverse_(w => skaka.observe.Log.println(s"[skaka] whisper: ${w.url} (model ${w.model}, ${w.language})")))
         _     <- hubGauges(hub)
         recs   = new RecordingStore(xa)
         sklinks = new SkawauStore(xa)
-        recorder <- cfg.skawau.traverse(c => Recorder.resource(recs, sklinks, new SkawauClient(c, http, upload), box, hub, notices))
+        // skawau にファイルを置く（録画・議事録）
+        skFiles  = cfg.skawau.map(c => new SkawauFiles(new SkawauClient(c, http, upload), sklinks, box, recs.participantEmails))
+        recorder <- skFiles.traverse(f => Recorder.resource(recs, sklinks, f, hub, notices))
+        // 議事録（skakapo）. 利用者の skakapo の API トークンで依頼を作る
+        minutes <- cfg.skakapo.traverse { c =>
+                     val api = new TokenApi("skakapo", "SKAKAPO_URL", c.url, c.internalUrl, "skakapo_", http)
+                     MinutesService.resource(new MinutesStore(xa), meetings, new TokenLinks(Some(api), new LinkStore(xa, "skakapo_link"), box, sess, "skakapo"), c,
+                       skFiles, cfg.api.publicUrl)
+                   }
         _ <- Resource.eval(cfg.skawau.traverse_(c => skaka.observe.Log.println(s"[skaka] skawau: ${c.url} (recordings in ${c.dir})")))
         // OIDC の設定の誤り（issuer の URL など）は起動時に知らせる（IdP が止まっていても起動はする）
         _ <- Resource.eval(oidc.traverse_(_.discover.attempt.flatMap {
@@ -141,7 +159,7 @@ object Main extends IOApp.Simple:
              }))
         _ <- purgeLoop(users).background
         app = healthRoutes(xa) <+> ApiRoutes(ApiRoutes.Deps(oidc, users, rooms, meetings, links, hub, skuaka, box, sess, cfg.api,
-                recs, sklinks, new OAuthStore(xa), recorder)) <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, sess).routes
+                recs, sklinks, new OAuthStore(xa), recorder, stt, minutes)) <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, sess).routes
         all = Guard(cfg.staticDir.fold(app)(d => app <+> spa(d)))
         // 会議の WebSocket（/ws）は接続の数（skaka.ws.connections）で見るので、スパンにはしない
         traced <- HttpTelemetry.middleware(List("/api", "/auth", "/oauth", "/mcp"))

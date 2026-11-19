@@ -33,6 +33,28 @@ class CoreSpec extends munit.FunSuite:
     assertEquals(SafePath.orElse(Some("//x"), "/settings"), "/settings")
   }
 
+  test("文字起こし: 主催者だけが始める・全員に知らせる・文字起こし中だけ字幕を配って保存する・全員が出たら止まる") {
+    val (l0, _) = withPeers()(peer("a", Some(owner)), peer("b", Some(other)))
+    val f       = fresh
+    val line    = TranscriptLine("t1", "b", "B", Some(other), "こんにちは", now.toString)
+    assertEquals(Conference.caption(l0, line, now)._2, Nil)
+    val (l1, fx1) = Conference.handle(l0, "b", ClientMsg.Transcribe(true), now, f)
+    assertEquals((l1.transcribing, sent(fx1, "b")), (None, List(ServerMsg.Error("主催者だけができる操作です"))))
+    val (l2, fx2) = Conference.handle(l0, "a", ClientMsg.Transcribe(true), now, f)
+    assertEquals(sent(fx2, "b"), List(ServerMsg.Transcribing(Some(TranscribeNotice("A", now.toString)))))
+    val (_, fx3) = Conference.caption(l2, line, now)
+    assertEquals(fx3.collect { case Effect.SaveTranscript(_, l, _) => l }, List(line))
+    assertEquals((sent(fx3, "a"), sent(fx3, "b")), (List(ServerMsg.Caption(line)), List(ServerMsg.Caption(line))))
+    // 後から来た人にも、文字起こし中であることを知らせる
+    val (l3, fx4) = Conference.arrive(l2, peer("c", Some(UUID.randomUUID())), now, f)
+    assert(sent(fx4, "c").exists { case w: ServerMsg.Welcome => w.transcribing.isDefined; case _ => false })
+    // 出ていった人の音声は配らない. 全員が出たら止まる
+    assertEquals(Conference.caption(l3, line.copy(peer = "x"), now)._2, Nil)
+    val l4 = List("a", "b", "c").foldLeft(l3)((l, id) => Conference.leave(l, id, now)._1)
+    assertEquals(l4.transcribing, None)
+    assertEquals(Conference.handle(l2, "a", ClientMsg.Transcribe(false), now, f)._1.transcribing, None)
+  }
+
   test("最初の人が入ると会議が始まる. 持ち主は主催者. 後から来た人に知らせる") {
     val (l, fx) = withPeers()(peer("a", Some(owner)), peer("b", Some(other)))
     assertEquals(l.peers.map(p => (p.id, p.host)), Vector(("a", true), ("b", false)))

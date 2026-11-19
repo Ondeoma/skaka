@@ -16,3 +16,7 @@ else
   export DEV_LOGIN=true
   unset OIDC_ISSUER OIDC_CLIENT_ID OIDC_CLIENT_SECRET
 fi
+# 議事録・要約を頼む skakapo（開発中の skakapo の画面 :5199 から API にも届く）
+export SKAKAPO_URL=${SKAKAPO_URL:-http://localhost:5199}
+# 文字起こしの Whisper（OpenAI 互換の API. 設定したときだけ使う. docs/design.md の「文字起こし」を参照）
+#   export WHISPER_URL=http://localhost:8000/v1 WHISPER_MODEL=Systran/faster-whisper-small

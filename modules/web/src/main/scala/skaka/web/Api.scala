@@ -101,9 +101,10 @@ object Api {
 
   // ---------------------------------------------------------------- skuaka（カレンダー）
 
-  def skuaka(): Future[SkuakaLinkDto] = get[SkuakaLinkDto]("/api/skuaka")
-  def linkSkuaka(token: String): Future[SkuakaLinkDto] = put[SkuakaLinkDto]("/api/skuaka", SkuakaLinkReq(token).asJson)
-  def unlinkSkuaka(): Future[Unit] = delete("/api/skuaka")
+  /** API トークンでの連携（service は skuaka・skakapo）. */
+  def tokenLink(service: String): Future[TokenLinkDto] = get[TokenLinkDto](s"/api/$service")
+  def linkToken(service: String, token: String): Future[TokenLinkDto] = put[TokenLinkDto](s"/api/$service", TokenLinkReq(token).asJson)
+  def unlinkToken(service: String): Future[Unit] = delete(s"/api/$service")
   def upcoming(from: String, to: String): Future[List[UpcomingDto]] =
     get[List[UpcomingDto]](s"/api/skuaka/events?from=$from&to=$to&tz=${enc(Time.timezone())}")
   def attachRoom(eventId: UUID): Future[RoomDto] = post[RoomDto](s"/api/skuaka/events/$eventId/room")
@@ -123,8 +124,8 @@ object Api {
   def deleteRecording(id: UUID): Future[Unit] = delete(s"/api/recordings/$id")
 
   /** 本文をそのまま（JSON にせず）送り、応答の JSON を返す. 失敗は ApiError（status 0 は通信の失敗）. */
-  private def putBlob(url: String, data: dom.Blob, contentType: String): Future[Option[Json]] = {
-    val i = init(dom.HttpMethod.PUT)
+  private def putBlob(url: String, data: dom.Blob, contentType: String, method: dom.HttpMethod = dom.HttpMethod.PUT): Future[Option[Json]] = {
+    val i = init(method)
     i.headers = js.Dictionary[String]("X-Skaka" -> "1", "Content-Type" -> contentType)
     i.body = data
     dom.fetch(url, i).toFuture.recover { case e => throw ApiError(0, e.getMessage) }.flatMap { res =>
@@ -138,6 +139,16 @@ object Api {
   /** 録画の断片を送る（本文はそのまま）. */
   def putChunk(id: UUID, seq: Int, data: dom.Blob): Future[Unit] =
     putBlob(s"/api/recordings/$id/chunks/$seq", data, "application/octet-stream").map(_ => ())
+
+  /** 文字起こしの音声を送る（key は切符と一緒に受け取った鍵、agoMs は話し始めてからの時間）. 文字にできなければ None. */
+  def speech(key: String, agoMs: Long, wav: dom.Blob): Future[Option[TranscriptLine]] =
+    putBlob(s"/api/speech/${enc(key)}?ago=$agoMs", wav, "audio/wav", dom.HttpMethod.POST).map(_.flatMap(_.as[TranscriptLine].toOption))
+
+  // skakapo（議事録・要約）
+  def requestMinutes(meetingId: UUID): Future[MinutesDto] = post[MinutesDto](s"/api/meetings/$meetingId/minutes")
+  def refreshMinutes(id: UUID): Future[Unit] = post[Json](s"/api/minutes/$id/refresh").map(_ => ())
+  def deleteMinutes(id: UUID): Future[Unit] = delete(s"/api/minutes/$id")
+  def fileMinutes(id: UUID): Future[Unit] = post[Json](s"/api/minutes/$id/file").map(_ => ())
 
   /** アイコンを保存する（画像そのものを送る）・消す. */
   def uploadAvatar(image: dom.Blob): Future[MeDto] = putBlob("/api/me/avatar", image, image.`type`).map(as[MeDto])

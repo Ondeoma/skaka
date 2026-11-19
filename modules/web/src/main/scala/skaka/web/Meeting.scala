@@ -81,6 +81,8 @@ object Meeting {
   // ---------------------------------------------------------------- 内部の状態
 
   private var ws: Option[dom.WebSocket] = None
+  /** 文字起こしの音声を送るときの鍵（切符と一緒に受け取る）. */
+  var speechKey: String = ""
   private var ice: js.Array[js.Any] = js.Array()
   private var conns: Map[String, PeerConn] = Map.empty
   /** 相手 → (MediaStream の id → MediaStream). */
@@ -103,7 +105,7 @@ object Meeting {
   private def tracks(s: js.Dynamic, kind: String): List[js.Dynamic] =
     s.getTracks().asInstanceOf[js.Array[js.Dynamic]].toList.filter(_.kind.asInstanceOf[String] == kind)
 
-  private def audioTrack: Option[js.Dynamic] = local.flatMap(tracks(_, "audio").headOption)
+  def audioTrack: Option[js.Dynamic] = local.flatMap(tracks(_, "audio").headOption)
   /** 送っている映像（背景を変えていれば作った映像、そうでなければカメラ）. */
   private def videoTrack: Option[js.Dynamic] = local.flatMap(tracks(_, "video").headOption)
   /** カメラそのもの（背景を変えるときの元. 止める・解像度を変えるのはこちら）. */
@@ -342,6 +344,7 @@ object Meeting {
       case Failure(e) => phase := "closed"; reason := e.getMessage
       case Success(j) =>
         ice = j.iceServers.map(s => js.JSON.parse(s.asJson.dropNullValues.noSpaces).asInstanceOf[js.Any]).toJSArray
+        speechKey = j.key
         connect(j.ticket)
     }
   }
@@ -392,6 +395,7 @@ object Meeting {
 
   private def cleanup(): Unit = {
     Recorder.leave()
+    Transcriber.leave()
     timers.foreach(dom.window.clearInterval)
     timers = Nil
     conns.values.foreach(_.close())
@@ -431,9 +435,10 @@ object Meeting {
   private def name(id: String): String = if (id == selfId) "あなた" else peers.v.find(_.id == id).map(_.name).getOrElse("")
 
   private def onServer(m: ServerMsg): Unit = m match {
-    case ServerMsg.Welcome(me, ps, history, lk, started, recording) =>
+    case ServerMsg.Welcome(me, ps, history, lk, started, recording, transcribing) =>
       self := Some(me)
       Recorder.notice := recording
+      Transcriber.set(transcribing)
       peers := ps
       chat := history
       locked := lk
@@ -495,6 +500,12 @@ object Meeting {
       if (info.isDefined && !Recorder.mine.v) Store.toast(s"${info.get.by} さんが録画を始めました")
       if (info.isEmpty && Recorder.notice.v.isDefined && !Recorder.mine.v) Store.toast("録画が終わりました")
       Recorder.notice := info
+    case ServerMsg.Transcribing(info) =>
+      if (info.isDefined && Transcriber.notice.v.isEmpty)
+        Store.toast(if (self.v.exists(_.name == info.get.by) && isHost) "文字起こしを始めました" else s"${info.get.by} さんが文字起こしを始めました")
+      if (info.isEmpty && Transcriber.notice.v.isDefined) Store.toast("文字起こしが終わりました")
+      Transcriber.set(info)
+    case ServerMsg.Caption(line) => Transcriber.caption(line)
     case ServerMsg.Error(msg) => Store.toast(msg, error = true)
     case ServerMsg.Pong()     => ()
   }

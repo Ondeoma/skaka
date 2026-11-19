@@ -33,7 +33,7 @@ class FlowSpec extends munit.CatsEffectSuite:
     oauthClients = List(OAuthClient("skuaka", "skuaka-test-secret-0123456789", "http://skuaka.test/api/integrations/skaka/callback", "skuaka",
       List("read", "write"))))
 
-  final case class App(idp: HttpApp[IO], app: HttpApp[IO], hub: Hub, skuaka: FakeSkuaka, skawau: FakeSkawau, recorder: Recorder)
+  final case class App(idp: HttpApp[IO], app: HttpApp[IO], hub: Hub, skuaka: FakeSkuaka, skawau: FakeSkawau, recorder: Recorder, skakapo: FakeSkakapo)
 
   /** IdP・偽の skuaka・アプリ（ルート）を用意する. DB はまっさらにする. */
   private val fixture = ResourceSuiteLocalFixture("app", for
@@ -49,7 +49,7 @@ class FlowSpec extends munit.CatsEffectSuite:
     users    = new UserStore(xa)
     rooms    = new RoomStore(xa, users)
     meetings = new MeetingStore(xa)
-    hub  <- Hub.resource(rooms, meetings)
+    hub  <- Hub.resource(rooms, meetings, transcription = true)
     fake <- Resource.eval(FakeSkuaka.create)
     fsw  <- Resource.eval(FakeSkawau.create)
     dir  <- Resource.make(IO.blocking(java.nio.file.Files.createTempDirectory("skaka-rec")))(d =>
@@ -58,13 +58,19 @@ class FlowSpec extends munit.CatsEffectSuite:
     recs  = new RecordingStore(xa)
     links = new SkawauStore(xa)
     swc   = Client.fromHttpApp(fsw.routes.orNotFound)
-    rec  <- Recorder.resource(recs, links, new SkawauClient(SkawauConfig("http://skawau.test", "http://skawau.test", "skaka", "skaka-secret-0123456789",
-              dir.toString, 1024 * 1024), swc, swc), box, hub)
+    files = new SkawauFiles(new SkawauClient(SkawauConfig("http://skawau.test", "http://skawau.test", "skaka", "skaka-secret-0123456789",
+              dir.toString, 1024 * 1024), swc, swc), links, box, recs.participantEmails)
+    rec  <- Recorder.resource(recs, links, files, hub)
+    fkp  <- Resource.eval(FakeSkakapo.create)
+    kpApi = new TokenApi("skakapo", "SKAKAPO_URL", "http://skakapo.test", "http://skakapo.test", "skakapo_", Client.fromHttpApp(fkp.routes.orNotFound))
+    mins <- MinutesService.resource(new MinutesStore(xa), meetings, new TokenLinks(Some(kpApi), new LinkStore(xa, "skakapo_link"), box,
+              new SessionAuth(users, apiCfg), "skakapo"), SkakapoConfig("http://skakapo.test", "http://skakapo.test"), Some(files), apiCfg.publicUrl,
+              interval = 20.millis)
   yield
-    val sk  = new SkuakaClient("http://skuaka.test", Client.fromHttpApp(fake.routes.orNotFound))
+    val sk  = SkuakaClient("http://skuaka.test", Client.fromHttpApp(fake.routes.orNotFound))
     val app = ApiRoutes(ApiRoutes.Deps(Some(oidc), users, rooms, meetings, new LinkStore(xa), hub, Some(sk), box,
-      new SessionAuth(users, apiCfg), apiCfg, recs, links, new OAuthStore(xa), Some(rec))).orNotFound
-    App(idp.routes.orNotFound, app, hub, fake, fsw, rec))
+      new SessionAuth(users, apiCfg), apiCfg, recs, links, new OAuthStore(xa), Some(rec), Some(FakeStt), Some(mins))).orNotFound
+    App(idp.routes.orNotFound, app, hub, fake, fsw, rec, fkp))
 
   override def munitFixtures = List(fixture)
 
@@ -176,13 +182,13 @@ class FlowSpec extends munit.CatsEffectSuite:
       _   = assertEquals(ja.iceServers.size, 2)
       _   = assert(ja.iceServers(1).username.exists(_.contains(":")) && ja.iceServers(1).credential.nonEmpty)
       ca <- connect(ja.ticket)
-      me <- ca.await { case ServerMsg.Welcome(self, peers, _, _, _, _) => (self, peers) }
+      me <- ca.await { case ServerMsg.Welcome(self, peers, _, _, _, _, _) => (self, peers) }
       _   = assertEquals((me._1.host, me._2), (true, Nil))
       // 切符は1回だけ
       again <- fixture().hub.connect(ja.ticket)
       _   = assertEquals(again, None)
       cb <- join(Some(b), r.code).flatMap(j => connect(j.ticket))
-      wb <- cb.await { case ServerMsg.Welcome(self, peers, _, _, _, _) => (self, peers) }
+      wb <- cb.await { case ServerMsg.Welcome(self, peers, _, _, _, _, _) => (self, peers) }
       _   = assertEquals((wb._1.host, wb._2.map(_.name)), (false, List("主催 花子")))
       jn <- ca.await { case ServerMsg.Joined(p) => p }
       _   = assertEquals(jn.name, "参加 次郎")
@@ -205,7 +211,7 @@ class FlowSpec extends munit.CatsEffectSuite:
       lb <- ca.await { case ServerMsg.Lobby(ws) => ws }
       _   = assertEquals(lb.map(p => (p.name, p.guest)), List(("ゲスト", true)))
       _  <- fixture().hub.receive(ca.id, ClientMsg.Admit(cg.id))
-      wg <- cg.await { case ServerMsg.Welcome(_, peers, chat, _, _, _) => (peers, chat) }
+      wg <- cg.await { case ServerMsg.Welcome(_, peers, chat, _, _, _, _) => (peers, chat) }
       _   = assertEquals((wg._1.size, wg._2.map(_.text)), (2, List("こんにちは")))
       // ロック中は新しく入れない
       _  <- fixture().hub.receive(ca.id, ClientMsg.Lock(true))
@@ -280,9 +286,9 @@ class FlowSpec extends munit.CatsEffectSuite:
     val f = fixture()
     for
       a   <- login("予定 太郎", "plan@example.com")
-      bad <- call(a, Method.PUT, "/api/skuaka", SkuakaLinkReq("skuaka_wrong").asJson)
+      bad <- call(a, Method.PUT, "/api/skuaka", TokenLinkReq("skuaka_wrong").asJson)
       _    = assertEquals(bad.status, Status.BadRequest)
-      ln  <- call(a, Method.PUT, "/api/skuaka", SkuakaLinkReq(FakeSkuaka.Token).asJson).flatMap(json[SkuakaLinkDto])
+      ln  <- call(a, Method.PUT, "/api/skuaka", TokenLinkReq(FakeSkuaka.Token).asJson).flatMap(json[TokenLinkDto])
       _    = assertEquals((ln.linked, ln.account, ln.canWrite), (true, Some("予定 太郎"), true))
       // 予定を立てる: skuaka に予定（場所に会議室の URL）. 招待はメールで skuaka の人を探す
       sc  <- call(a, Method.POST, "/api/skuaka/schedule", ScheduleReq("設計レビュー", "2026-11-20T01:00:00Z", "2026-11-20T02:00:00Z",
@@ -505,6 +511,116 @@ class FlowSpec extends munit.CatsEffectSuite:
     yield ()
   }
 
+  /** 文字起こしの音声を送る（本文はそのまま. 偽の Whisper は本文を UTF-8 の文字として返す）. */
+  private def speech(key: String, text: String, mime: String = "audio/wav"): IO[Response[IO]] =
+    fixture().app.run(Request[IO](Method.POST, Uri.unsafeFromString(s"/api/speech/$key?ago=1500"))
+      .withEntity(text.getBytes("UTF-8"))(using EntityEncoder.byteArrayEncoder).putHeaders(Header.Raw(CIString("Content-Type"), mime)))
+
+  test("文字起こしと議事録: 主催者だけが始める・話した人の名前で全員に字幕・会議の記録に残る・skakapo に議事録を頼んで取り込む") {
+    val f = fixture()
+    for
+      a   <- login("文字 主催", "tr-host@example.com")
+      b   <- login("文字 参加", "tr-member@example.com")
+      r   <- call(a, Method.POST, "/api/rooms", RoomReq("文字起こしの会議").asJson).flatMap(json[RoomDto])
+      cfg <- call(None, Method.GET, "/api/client-config").flatMap(json[ClientConfigDto])
+      _    = assertEquals((cfg.transcription, cfg.skakapo), (true, Some("http://skakapo.test")))
+      ja  <- join(Some(a), r.code)
+      ca  <- connect(ja.ticket)
+      _   <- ca.await { case w: ServerMsg.Welcome => () }
+      jb  <- join(Some(b), r.code)
+      _    = assert(jb.key.nonEmpty && jb.key != jb.ticket)
+      cb  <- connect(jb.ticket)
+      _   <- cb.await { case w: ServerMsg.Welcome => () }
+      _   <- f.hub.receive(cb.id, ClientMsg.Media(MediaState(audio = true, video = false)))
+      // 始める前は受け付けない. 主催者でなければ始められない
+      s0  <- speech(jb.key, "まだです")
+      _    = assertEquals(s0.status, Status.Conflict)
+      _   <- f.hub.receive(cb.id, ClientMsg.Transcribe(true))
+      e   <- cb.await { case ServerMsg.Error(m) => m }
+      _    = assert(e.contains("主催者"), e)
+      _   <- f.hub.receive(ca.id, ClientMsg.Transcribe(true))
+      n   <- cb.await { case ServerMsg.Transcribing(n) => n }
+      _    = assertEquals(n.map(_.by), Some("文字 主催"))
+      // 話した人の名前で、全員に字幕を送る
+      s1  <- speech(jb.key, "  来週の予算について決めましょう ").flatMap(json[TranscriptLine])
+      _    = assertEquals((s1.name, s1.text, s1.peer), ("文字 参加", "来週の予算について決めましょう", cb.id))
+      c1  <- ca.await { case ServerMsg.Caption(l) => l }
+      _    = assertEquals(c1, s1)
+      _   <- cb.await { case ServerMsg.Caption(l) => l }
+      // Whisper の空振り（無音から作りがちな文）は捨てる. 鍵が違う・音声でないものは断る
+      s2  <- speech(jb.key, "ご視聴ありがとうございました。")
+      _    = assertEquals(s2.status, Status.NoContent)
+      s3  <- speech("wrong-key", "だれ？")
+      _    = assertEquals(s3.status, Status.Forbidden)
+      s4  <- speech(jb.key, "テキスト", "text/plain")
+      _    = assertEquals(s4.status, Status.UnsupportedMediaType)
+      // マイクを切った人の音声は文字にしない
+      _   <- f.hub.receive(ca.id, ClientMsg.Media(MediaState(audio = false, video = false)))
+      s5  <- speech(ja.key, "聞こえないはず")
+      _    = assertEquals(s5.status, Status.NoContent)
+      _   <- f.hub.receive(ca.id, ClientMsg.Media(MediaState(audio = true, video = false)))
+      s6  <- speech(ja.key, "では予算は十万円で").flatMap(json[TranscriptLine])
+      _   <- f.hub.receive(ca.id, ClientMsg.Transcribe(false))
+      _   <- cb.await { case ServerMsg.Transcribing(None) => () }
+      s7  <- speech(ja.key, "止めたあと")
+      _    = assertEquals(s7.status, Status.Conflict)
+      _   <- f.hub.disconnect(cb.id) *> f.hub.disconnect(ca.id)
+      // 会議の記録に残る（話した順）
+      ms  <- call(a, Method.GET, s"/api/meetings?room=${r.code}").flatMap(json[List[MeetingDto]])
+      mid  = ms.head.id
+      d   <- IO.sleep(200.millis) *> call(a, Method.GET, s"/api/meetings/$mid").flatMap(json[MeetingDetailDto])
+      _    = assertEquals(d.transcript.map(t => (t.name, t.text)), List("文字 参加" -> s1.text, "文字 主催" -> s6.text))
+      // 議事録: skakapo と連携していなければ頼めない. 参照のみのトークンでは頼めない
+      st  <- call(a, Method.GET, "/api/skakapo").flatMap(json[TokenLinkDto])
+      _    = assertEquals((st.available, st.linked), (true, false))
+      m0  <- call(a, Method.POST, s"/api/meetings/$mid/minutes")
+      _    = assertEquals(m0.status, Status.Conflict)
+      bad <- call(a, Method.PUT, "/api/skakapo", TokenLinkReq("skuaka_wrong").asJson)
+      _    = assertEquals(bad.status, Status.BadRequest)
+      ro  <- call(a, Method.PUT, "/api/skakapo", TokenLinkReq(FakeSkakapo.ReadOnly).asJson).flatMap(json[TokenLinkDto])
+      _    = assertEquals((ro.linked, ro.canWrite, ro.account), (true, false, Some("エージェント 利用者")))
+      m1  <- call(a, Method.POST, s"/api/meetings/$mid/minutes")
+      _    = assertEquals(m1.status, Status.Forbidden)
+      _   <- call(a, Method.PUT, "/api/skakapo", TokenLinkReq(FakeSkakapo.Token).asJson).flatMap(json[TokenLinkDto])
+      // 議事録は頼んだ人の skawau に置く（録画と同じ連携）
+      sw  <- call(a, Method.GET, "/api/integrations/skawau/connect?returnTo=/settings").map(location)
+      _   <- call(a, Method.GET, s"/api/integrations/skawau/callback?state=${sw.params("state")}&code=${FakeSkawau.Code}")
+      // 頼む: 会議の記録を Markdown で添付した「その他の依頼」を作り、返事を待って取り込む
+      m2  <- call(a, Method.POST, s"/api/meetings/$mid/minutes").flatMap(json[MinutesDto])
+      _    = assertEquals((m2.status, m2.sessionUrl), (MinutesStatus.Running, s"http://skakapo.test/sessions/${FakeSkakapo.Session}"))
+      att <- f.skakapo.attachment.get
+      _    = assert(att.contains("## 文字起こし") && att.contains("文字 参加: 来週の予算について決めましょう"), att)
+      req <- f.skakapo.request.get
+      _    = assertEquals(req.hcursor.get[String]("requestType").toOption, Some("other"))
+      _    = assert(req.hcursor.downField("values").get[String]("description").exists(_.contains(MinutesService.AttachmentName)))
+      _    = assertEquals(req.hcursor.get[List[UUID]]("attachments").toOption, Some(List(FakeSkakapo.Attachment)))
+      done <- call(a, Method.GET, s"/api/meetings/$mid").flatMap(json[MeetingDetailDto]).map(_.minutes)
+                .iterateUntil(_.exists(x => x.status != MinutesStatus.Running && (x.fileUrl.isDefined || x.fileError.isDefined))).timeout(5.seconds)
+      _    = assertEquals(done.map(x => (x.status, x.body, x.mine)), List((MinutesStatus.Done, FakeSkakapo.Answer, true)))
+      // skawau の「skaka 議事録/yyyy-MM」に Markdown で置き、参加したメンバーと共有する
+      _    = assertEquals(done.map(x => (x.fileUrl, x.fileError)), List((Some(s"http://skawau.test/view/${FakeSkawau.File}"), None)))
+      up  <- f.skawau.uploads.get.map(_.last)
+      _    = assert(up._1("path").startsWith("skaka 議事録/") && up._1("name").startsWith("議事録 文字起こしの会議") && up._1("name").endsWith(".md"), up._1.toString)
+      doc  = new String(up._2, "UTF-8")
+      _    = assert(doc.startsWith("# 議事録: 文字起こしの会議") && doc.contains(FakeSkakapo.Answer) && doc.contains(s"/meetings/$mid"), doc)
+      sh  <- f.skawau.shares.get
+      _    = assert(sh.contains(FakeSkawau.File -> FakeSkawau.Member), sh.toString)
+      // skakapo で直してもらったら取り込み直す（頼んだ人だけ）
+      _   <- f.skakapo.answer.set("## 要約\n直しました")
+      rb  <- call(b, Method.POST, s"/api/minutes/${m2.id}/refresh")
+      _    = assert(rb.status == Status.Forbidden || rb.status == Status.NotFound, rb.status.toString)
+      _   <- call(a, Method.POST, s"/api/minutes/${m2.id}/refresh").map(r => assertEquals(r.status, Status.Accepted))
+      d2  <- call(a, Method.GET, s"/api/meetings/$mid").flatMap(json[MeetingDetailDto])
+      _    = assertEquals(d2.minutes.map(_.body), List("## 要約\n直しました"))
+      // 取り込み直したら、置いたファイルの中身を書き換える（新しいファイルは作らない）
+      wr  <- f.skawau.writes.get
+      _    = assertEquals(wr.map(_._1), List(FakeSkawau.File))
+      _    = assert(new String(wr.head._2, "UTF-8").contains("直しました"))
+      ups <- f.skawau.uploads.get
+      _    = assertEquals(ups.count(_._1("path").startsWith("skaka 議事録/")), 1)
+    yield ()
+  }
+
   test("守り: 本文の大きさの上限・セキュリティのヘッダー・ログアウトの CSRF・メッセージの連投") {
     val echo = Guard(HttpRoutes.of[IO] {
       case req @ POST -> Root / "api" / "echo" => req.bodyText.compile.string.flatMap(t => Ok(t.length.toString))
@@ -543,7 +659,7 @@ class FlowSpec extends munit.CatsEffectSuite:
       a  <- login("寝落ち", "sleep@example.com")
       r  <- call(a, Method.POST, "/api/rooms", RoomReq("夜").asJson).flatMap(json[RoomDto])
       c  <- join(Some(a), r.code).flatMap(j => connect(j.ticket))
-      _  <- c.await { case ServerMsg.Welcome(_, _, _, _, _, _) => () }
+      _  <- c.await { case ServerMsg.Welcome(_, _, _, _, _, _, _) => () }
       _  <- IO.sleep(20.millis) *> fixture().hub.reap(10.millis)
       rs <- c.closed
       _   = assert(rs.contains("応答"), rs)
@@ -553,7 +669,8 @@ class FlowSpec extends munit.CatsEffectSuite:
   }
 
 /** テスト用の偽の skawau（OAuth のトークンの発行・ルート・アップロード・ユーザーの照会・共有）. */
-final class FakeSkawau(val uploads: Ref[IO, List[(Map[String, String], Array[Byte])]], val shares: Ref[IO, List[(UUID, UUID)]]):
+final class FakeSkawau(val uploads: Ref[IO, List[(Map[String, String], Array[Byte])]], val shares: Ref[IO, List[(UUID, UUID)]],
+                       val writes: Ref[IO, List[(UUID, Array[Byte])]]):
   import FakeSkawau.*
 
   private def authed(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
@@ -574,9 +691,11 @@ final class FakeSkawau(val uploads: Ref[IO, List[(Map[String, String], Array[Byt
       authed(req)(req.body.compile.to(Array).flatMap { b =>
         uploads.update(_ :+ (req.params -> b)) *> Ok(Json.obj("id" -> File.asJson, "name" -> req.params("name").asJson))
       })
+    case req @ PUT -> Root / "api" / "files" / id / "content" =>
+      authed(req)(req.body.compile.to(Array).flatMap(b => writes.update(_ :+ (UUID.fromString(id) -> b)) *> Ok(Json.obj("id" -> id.asJson))))
     case req @ POST -> Root / "api" / "users" / "lookup" =>
       authed(req)(req.as[Json].flatMap(j => Ok(Json.obj("users" -> j.hcursor.get[List[String]]("emails").getOrElse(Nil)
-        .filter(_ == "member2@example.com").map(_ => Json.obj("id" -> Member.asJson)).asJson))))
+        .filter(e => e == "member2@example.com" || e == "tr-member@example.com").map(_ => Json.obj("id" -> Member.asJson)).asJson))))
     case req @ POST -> Root / "api" / "files" / id / "shares" =>
       authed(req)(req.as[Json].flatMap(j => shares.update(_ :+ (UUID.fromString(id), j.hcursor.get[UUID]("userId").toOption.get)) *> Created(Json.obj())))
   }
@@ -587,7 +706,8 @@ object FakeSkawau:
   val Root0  = UUID.randomUUID()
   val File   = UUID.randomUUID()
   val Member = UUID.randomUUID()
-  def create: IO[FakeSkawau] = (Ref.of[IO, List[(Map[String, String], Array[Byte])]](Nil), Ref.of[IO, List[(UUID, UUID)]](Nil)).mapN(new FakeSkawau(_, _))
+  def create: IO[FakeSkawau] = (Ref.of[IO, List[(Map[String, String], Array[Byte])]](Nil), Ref.of[IO, List[(UUID, UUID)]](Nil),
+    Ref.of[IO, List[(UUID, Array[Byte])]](Nil)).mapN(new FakeSkawau(_, _, _))
 
 /** テスト用の偽の skuaka（トークン1つ・ユーザー2人・メインのカレンダー1つ・予定）. */
 final class FakeSkuaka(val events: Ref[IO, Map[UUID, Json]]):
@@ -634,3 +754,43 @@ object FakeSkuaka:
   val Guest    = UUID.randomUUID()
   val Calendar = UUID.randomUUID()
   def create: IO[FakeSkuaka] = Ref.of[IO, Map[UUID, Json]](Map.empty).map(new FakeSkuaka(_))
+
+/** テスト用の偽の Whisper（本文を UTF-8 の文字として返す）. */
+object FakeStt extends SpeechToText:
+  def transcribe(audio: Array[Byte], mime: String): IO[Either[String, String]] = IO.pure(Right(new String(audio, "UTF-8")))
+
+/** テスト用の偽の skakapo（API トークンの確かめ・添付・依頼の作成・会話の出来事）. 1回目の出来事の問い合わせは作業中、2回目から返事. */
+final class FakeSkakapo(val attachment: Ref[IO, String], val request: Ref[IO, Json], val answer: Ref[IO, String], polls: Ref[IO, Int]):
+  import FakeSkakapo.*
+
+  private def authed(req: Request[IO])(f: Boolean => IO[Response[IO]]): IO[Response[IO]] =
+    req.headers.get[Authorization].map(_.credentials) match
+      case Some(Credentials.Token(AuthScheme.Bearer, Token))    => f(true)
+      case Some(Credentials.Token(AuthScheme.Bearer, ReadOnly)) => f(false)
+      case _                                                    => IO.pure(Response[IO](Status.Unauthorized))
+
+  val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "api" / "me" => authed(req)(_ => Ok(Json.obj("name" -> "エージェント 利用者".asJson)))
+    case req @ PATCH -> Root / "api" / "me" =>
+      authed(req)(w => if w then Ok(Json.obj()) else IO.pure(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "参照のみ".asJson))))
+    case req @ POST -> Root / "api" / "attachments" =>
+      authed(req)(_ => req.bodyText.compile.string.flatMap(attachment.set) *> Created(Json.obj("id" -> Attachment.asJson)))
+    case req @ POST -> Root / "api" / "sessions" =>
+      authed(req)(_ => req.as[Json].flatMap(request.set) *> Created(Json.obj("id" -> Session.asJson)))
+    case req @ GET -> Root / "api" / "sessions" / _ / "events" =>
+      authed(req)(_ => (polls.getAndUpdate(_ + 1), answer.get).flatMapN { (n, a) =>
+        if n == 0 then Ok(Json.obj("session" -> Json.obj("status" -> "running".asJson), "events" -> Json.arr()))
+        else Ok(Json.obj("session" -> Json.obj("status" -> "idle".asJson), "events" -> Json.arr(
+          Json.obj("id" -> 1.asJson, "kind" -> "user".asJson, "data" -> Json.obj("text" -> "依頼".asJson)),
+          Json.obj("id" -> 2.asJson, "kind" -> "assistant".asJson, "data" -> Json.obj("text" -> s"  $a\n".asJson)))))
+      })
+  }
+
+object FakeSkakapo:
+  val Token      = "skakapo_test-token"
+  val ReadOnly   = "skakapo_read-only"
+  val Session    = UUID.randomUUID()
+  val Attachment = UUID.randomUUID()
+  val Answer     = "## 要約\n予算は十万円に決まった"
+  def create: IO[FakeSkakapo] =
+    (Ref.of[IO, String](""), Ref.of[IO, Json](Json.Null), Ref.of[IO, String](Answer), Ref.of[IO, Int](0)).mapN(new FakeSkakapo(_, _, _, _))

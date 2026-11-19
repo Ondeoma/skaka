@@ -31,7 +31,7 @@ object ApiCatalog:
     Endpoint("DELETE", "/api/rooms/{code}/recent", "最近の会議室から外す"),
     Endpoint("GET", "/api/rooms/{code}/live", "いま入っている人と待機室の人数"),
     Endpoint("GET", "/api/meetings?room=&before=&limit=", "会議の履歴（自分の会議室の会議と、参加した会議. 新しい順）"),
-    Endpoint("GET", "/api/meetings/{meetingId}", "会議の参加者とチャットと録画"),
+    Endpoint("GET", "/api/meetings/{meetingId}", "会議の参加者・文字起こし・チャット・録画・議事録"),
     Endpoint("GET", "/api/recordings?room=&meeting=&limit=", "会議の録画（保存先は skawau. fileUrl で再生できる）"),
     Endpoint("GET", "/api/recordings/{recordingId}", "録画の状態"),
     Endpoint("POST", "/api/recordings/{recordingId}/retry", "保存できなかった録画を、もう一度 skawau に置く（録画した人）"),
@@ -208,12 +208,14 @@ final class McpRoutes(api: HttpRoutes[IO], sessions: SessionAuth, publicUrl: Str
           .mapR(ms => if ms.isEmpty then "会議の履歴はありません" else ms.map(meetingLine(c, _)).mkString("\n"))
       }
     },
-    Tool("get_meeting", "会議の参加者（入った・出た時刻）とチャットの記録. 議事録や要約を作るのに使える.",
+    Tool("get_meeting", "会議の参加者（入った・出た時刻）・文字起こし（話した人の名前付き）・チャットの記録と、作った議事録. 議事録や要約を作るのに使える.",
       schema(List("meetingId"), "meetingId" -> str("会議の ID（list_meetings の meetingId）")), readOnly = true) { (c, a) =>
       lift(need(a, "meetingId").flatMap(uuid)).andThen(id => c.call.as[MeetingDetailDto](Method.GET, path("api", "meetings", id.toString)).mapR { d =>
         (meetingLine(c, d.meeting) :: "参加者:" ::
           d.participants.map(p => s"- ${p.name}${if p.guest then "（ゲスト）" else ""} ${clock(c, p.joinedAt)}〜${p.leftAt.fold("")(clock(c, _))}") :::
+          (if d.transcript.isEmpty then Nil else "文字起こし:" :: d.transcript.map(t => s"[${clock(c, t.at)}] ${t.name}: ${t.text}")) :::
           (if d.chat.isEmpty then List("チャット: なし") else "チャット:" :: d.chat.map(m => s"[${clock(c, m.at)}] ${m.name}: ${m.text}")) :::
+          d.minutes.find(_.body.nonEmpty).toList.flatMap(m => List(s"議事録（skakapo. ${m.by}）:", m.body)) :::
           d.recordings.map(recordingLine(c, _))).mkString("\n")
       })
     },

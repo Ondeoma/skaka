@@ -7,7 +7,7 @@ import org.scalajs.dom
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 
 // ホーム: すぐに会議を始める・コードで入る・会議室の一覧・skuaka の今後の予定
-case class State(code: RV[String] = RV(""), link: RV[Option[SkuakaLinkDto]] = RV(None),
+case class State(code: RV[String] = RV(""), link: RV[Option[TokenLinkDto]] = RV(None),
                  upcoming: RV[Option[List[UpcomingDto]]] = RV(None), upError: RV[String] = RV(""), timer: RV[Int] = RV(0))
 
 def initState() = State()
@@ -15,7 +15,7 @@ def initState() = State()
 def mounted(s: State): Unit = {
   pageTitle("会議室")
   Store.loadRooms()
-  if (Store.skuakaEnabled) Store.report(Api.skuaka()) { l =>
+  if (Store.skuakaEnabled) Store.report(Api.tokenLink("skuaka")) { l =>
     s.link := Some(l)
     if (l.linked) loadUpcoming(s)
   }

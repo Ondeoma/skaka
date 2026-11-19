@@ -55,6 +55,12 @@ final class SkawauClient(val cfg: SkawauConfig, http: Client[IO], upload: Client
     val req = Request[IO](method, uri(path)).putHeaders(bearer(token))
     send(http, body.fold(req)(req.withEntity(_)))
 
+  /** ファイルの中身を書き換える（skawau に新しい版が残る）. */
+  def write(token: String, fileId: UUID, data: Array[Byte], mime: String): IO[Either[(Int, String), Json]] =
+    val ct = MediaType.parse(mime).toOption.getOrElse(MediaType.application.`octet-stream`)
+    send(http, Request[IO](Method.PUT, uri(s"/api/files/$fileId/content")).withEntity(data)(using EntityEncoder.byteArrayEncoder)
+      .withContentType(`Content-Type`(ct)).putHeaders(bearer(token)))
+
   /** ファイルを置く（folder の下の path のフォルダに. 同じ名前があれば名前を変えて）. 応答は skawau の NodeDto. */
   def put(token: String, folder: UUID, path: String, name: String, body: Stream[IO, Byte], length: Long, mime: String): IO[Either[(Int, String), Json]] =
     val u = uri(s"/api/files/$folder/upload").withQueryParams(Map("path" -> path, "name" -> name, "conflict" -> "rename"))
@@ -62,13 +68,70 @@ final class SkawauClient(val cfg: SkawauConfig, http: Client[IO], upload: Client
     send(upload, Request[IO](Method.PUT, u).withBodyStream(body).putHeaders(bearer(token), `Content-Length`(length), `Content-Type`(ct)))
 
 /**
+ * skawau にファイルを置く（録画・議事録で共通）: 利用者の skawau のトークン、自分のルートの下のフォルダへのアップロード、中身の書き換え、
+ * 会議に参加したメンバーとの共有. 失敗は利用者に見せる文言.
+ */
+final class SkawauFiles(val client: SkawauClient, links: SkawauStore, box: SecretBox, emails: (UUID, UUID) => IO[List[String]]):
+
+  type Res[A] = EitherT[IO, String, A]
+
+  private def sk(userId: UUID)(r: IO[Either[(Int, String), Json]]): Res[Json] =
+    EitherT(r.flatMap {
+      case Left((401, _)) => links.deleteToken(userId).as(Left("skawau との連携が切れています。設定の画面で連携し直してから、もう一度保存してください"))
+      case Left((_, m))   => IO.pure(Left(s"skawau: $m"))
+      case Right(j)       => IO.pure(Right(j))
+    })
+
+  /** 利用者の skawau のトークン. */
+  def token(userId: UUID): Res[String] =
+    EitherT.fromOptionF(links.token(userId), "skawau と連携していません。設定の画面で連携してから、もう一度保存してください")
+      .flatMap(enc => EitherT.fromOption[IO](box.open(enc._1), "skawau のトークンを読めません（SECRET_KEY が変わりました）。連携し直してください"))
+
+  /** 自分のルートの下の folder（なければ作る）に置く（同じ名前があれば名前を変える）. 置いたファイルの ID. */
+  def put(token: String, userId: UUID, folder: String, name: String, body: Stream[IO, Byte], length: Long, mime: String): Res[UUID] =
+    for
+      root   <- sk(userId)(client.call(token, Method.GET, "/api/files/root"))
+      rootId <- EitherT.fromOption[IO](root.hcursor.downField("folder").get[UUID]("id").toOption, "skawau の応答を読めません")
+      node   <- sk(userId)(client.put(token, rootId, folder, name, body, length, mime))
+      fileId <- EitherT.fromOption[IO](node.hcursor.get[UUID]("id").toOption, "skawau の応答を読めません")
+    yield fileId
+
+  /** 置いたファイルの中身を書き換える（skawau に新しい版が残る）. ファイルが消されていれば None. */
+  def write(token: String, userId: UUID, fileId: UUID, data: Array[Byte], mime: String): Res[Option[UUID]] =
+    EitherT(client.write(token, fileId, data, mime)).map(_ => Some(fileId)).recoverWith {
+      case (404, _) => EitherT.rightT(None)
+    }.leftSemiflatMap {
+      case (401, _) => links.deleteToken(userId).as("skawau との連携が切れています。設定の画面で連携し直してから、もう一度保存してください")
+      case (_, m)   => IO.pure(s"skawau: $m")
+    }
+
+  def url(fileId: UUID): String = s"${client.cfg.url}/view/$fileId"
+
+  /** 会議に参加したメンバーと共有する（閲覧のみ. skawau でメールアドレスが一致する人だけ）. 共有できた人数. */
+  def share(token: String, owner: UUID, fileId: UUID, meetingId: UUID): IO[Int] =
+    emails(meetingId, owner).flatMap {
+      case Nil => IO.pure(0)
+      case es =>
+        client.call(token, Method.POST, "/api/users/lookup", Some(Json.obj("emails" -> es.take(100).asJson))).flatMap {
+          case Left(_) => IO.pure(0)
+          case Right(j) =>
+            j.hcursor.downField("users").as[List[Json]].getOrElse(Nil).flatMap(_.hcursor.get[UUID]("id").toOption).distinct
+              .traverse(uid => client.call(token, Method.POST, s"/api/files/$fileId/shares",
+                Some(Json.obj("kind" -> "user".asJson, "userId" -> uid.asJson, "permission" -> "view".asJson))).map(_.isRight))
+              .map(_.count(identity))
+        }
+    }
+
+/**
  * 録画. 録画する人の画面が会議の映像と音を1つにまとめて MediaRecorder で録り、数秒ごとの断片を順に送ってくる.
  * サーバーは一時ファイルに追記し、録り終えたら（画面が終えた・しばらく届かない）、録画した人の skawau に置いて参加者と共有する.
  * skawau のアップロードは1回で全体を送るため、録画中は一時ファイルにためる（途中で切れても、それまでの分は残る）.
  */
-final class Recorder private (store: RecordingStore, links: SkawauStore, val client: SkawauClient, box: SecretBox, hub: Hub, sup: Supervisor[IO],
+final class Recorder private (store: RecordingStore, links: SkawauStore, val files: SkawauFiles, hub: Hub, sup: Supervisor[IO],
                               active: Ref[IO, Map[UUID, Recorder.Active]], notices: Notices):
   import Recorder.*
+
+  val client: SkawauClient = files.client
 
   private def file(id: UUID): Path = Path(client.cfg.dir) / s"$id.part"
 
@@ -185,15 +248,6 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
           hub.recording(a.rec.roomId, None, id) *> sup.supervise(save(id)).void
     }
 
-  private type Res[A] = EitherT[IO, String, A]
-
-  private def sk(token: String, userId: UUID)(r: IO[Either[(Int, String), Json]]): Res[Json] =
-    EitherT(r.flatMap {
-      case Left((401, _)) => links.deleteToken(userId).as(Left("skawau との連携が切れています。設定の画面で連携し直してから、もう一度保存してください"))
-      case Left((_, m))   => IO.pure(Left(s"skawau: $m"))
-      case Right(j)       => IO.pure(Right(j))
-    })
-
   /** skawau に置き、参加者と共有する. 失敗したら一時ファイルを残す（もう一度保存できる）. 終わったら録画した人にプッシュ通知. */
   private def save(id: UUID): IO[Unit] = skaka.observe.Telemetry.span("recording.save", "recording.id" -> id.toString)(saveImpl(id))
 
@@ -202,22 +256,17 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
       case None => Files[IO].deleteIfExists(file(id)).void
       case Some(r) =>
         val path = file(id)
-        val go: Res[Unit] =
+        val go: files.Res[Unit] =
           for
-            enc   <- EitherT.fromOptionF(links.token(r.userId), "skawau と連携していません。設定の画面で連携してから、もう一度保存してください")
-            token <- EitherT.fromOption[IO](box.open(enc._1), "skawau のトークンを読めません（SECRET_KEY が変わりました）。連携し直してください")
+            token <- files.token(r.userId)
             size  <- EitherT.liftF(Files[IO].size(path))
             head  <- EitherT.liftF(Files[IO].readRange(path, 64 * 1024, 0, HeadBytes.min(size)).compile.to(Array))
             fixed  = r.durationMs.filter(_ => r.mime.contains("webm")).flatMap(ms => Webm.withDuration(head, ms.toDouble)).getOrElse(head)
             body   = Stream.chunk(Chunk.array(fixed)) ++ Files[IO].readRange(path, 256 * 1024, head.length, size)
-            root  <- sk(token, r.userId)(client.call(token, Method.GET, "/api/files/root"))
-            folder <- EitherT.fromOption[IO](root.hcursor.downField("folder").get[UUID]("id").toOption, "skawau の応答を読めません")
             month  = DateTimeFormatter.ofPattern("yyyy-MM").withZone(ZoneId.of("Asia/Tokyo")).format(r.startedAt)
-            node  <- sk(token, r.userId)(client.put(token, folder, s"$Folder/$month", fileName(r.title) + ext(r.mime), body,
-                       fixed.length + size - head.length, r.mime))
-            fileId <- EitherT.fromOption[IO](node.hcursor.get[UUID]("id").toOption, "skawau の応答を読めません")
-            shared <- EitherT.liftF(if r.share then r.meetingId.fold(IO.pure(0))(share(token, r.userId, fileId, _)) else IO.pure(0))
-            _      <- EitherT.liftF(store.saved(id, fileId, s"${client.cfg.url}/view/$fileId", shared))
+            fileId <- files.put(token, r.userId, s"$Folder/$month", fileName(r.title) + ext(r.mime), body, fixed.length + size - head.length, r.mime)
+            shared <- EitherT.liftF(if r.share then r.meetingId.fold(IO.pure(0))(files.share(token, r.userId, fileId, _)) else IO.pure(0))
+            _      <- EitherT.liftF(store.saved(id, fileId, files.url(fileId), shared))
             _      <- EitherT.liftF(Files[IO].deleteIfExists(path))
           yield ()
         val result = go.value.flatMap {
@@ -225,21 +274,6 @@ final class Recorder private (store: RecordingStore, links: SkawauStore, val cli
           case Left(m)  => store.failed(id, m).as(false)
         }.handleErrorWith(e => store.failed(id, s"保存できませんでした: ${e.getMessage}").as(false))
         result.flatMap(ok => skaka.observe.Metrics.count("skaka.recordings.saved", "result" -> (if ok then "ok" else "failed")) *> notices.recording(r, ok))
-    }
-
-  /** 会議に参加したメンバーと共有する（閲覧のみ. skawau でメールアドレスが一致する人だけ）. 共有できた人数. */
-  private def share(token: String, owner: UUID, fileId: UUID, meetingId: UUID): IO[Int] =
-    store.participantEmails(meetingId, owner).flatMap {
-      case Nil => IO.pure(0)
-      case emails =>
-        client.call(token, Method.POST, "/api/users/lookup", Some(Json.obj("emails" -> emails.take(100).asJson))).flatMap {
-          case Left(_) => IO.pure(0)
-          case Right(j) =>
-            j.hcursor.downField("users").as[List[Json]].getOrElse(Nil).flatMap(_.hcursor.get[UUID]("id").toOption).distinct
-              .traverse(uid => client.call(token, Method.POST, s"/api/files/$fileId/shares",
-                Some(Json.obj("kind" -> "user".asJson, "userId" -> uid.asJson, "permission" -> "view".asJson))).map(_.isRight))
-              .map(_.count(identity))
-        }
     }
 
 object Recorder:
@@ -269,12 +303,11 @@ object Recorder:
 
   def ext(mime: String): String = if mime.contains("mp4") then ".mp4" else if mime.contains("ogg") then ".ogg" else ".webm"
 
-  def resource(store: RecordingStore, links: SkawauStore, client: SkawauClient, box: SecretBox, hub: Hub,
-               notices: Notices = Notices.none): Resource[IO, Recorder] =
+  def resource(store: RecordingStore, links: SkawauStore, files: SkawauFiles, hub: Hub, notices: Notices = Notices.none): Resource[IO, Recorder] =
     for
       sup    <- Supervisor[IO](await = false)
       active <- Resource.eval(Ref.of[IO, Map[UUID, Active]](Map.empty))
-      rec     = new Recorder(store, links, client, box, hub, sup, active, notices)
+      rec     = new Recorder(store, links, files, hub, sup, active, notices)
       n      <- Resource.eval(rec.recover)
       _      <- Resource.eval(IO.whenA(n > 0)(skaka.observe.Log.println(s"[skaka] saving $n recording(s) left by the previous run")))
       _      <- (IO.sleep(15.seconds) *> rec.sweep(Silent).handleErrorWith(e => skaka.observe.Log.println(s"[skaka] recording sweep failed: $e"))).foreverM.background

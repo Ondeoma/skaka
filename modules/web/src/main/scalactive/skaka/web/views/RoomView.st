@@ -96,9 +96,9 @@ def meAvatar = Store.me.mapC(_.map(_.brief))
           <video ref="s.preview" autoplay playsinline muted></video>
           <div v-if="camOff" class="noimg"><Avatar :user="meAvatar.v" :size="96" /><p class="muted">カメラはオフです</p></div>
           <div class="toggles">
-            <button :class="btn(Meeting.mic.v)" @click="Meeting.toggleMic()" :title='if (Meeting.mic.v) "マイクをオフ" else "マイクをオン"'>{{ if (Meeting.mic.v) "🎙" else "🔇" }}</button>
-            <button :class="btn(Meeting.cam.v)" @click="Meeting.toggleCam()" :title='if (Meeting.cam.v) "カメラをオフ" else "カメラをオン"'>{{ if (Meeting.cam.v) "📷" else "🚫" }}</button>
-            <button class="round" @click="s.devices := true" title="カメラ・マイクの設定">⚙</button>
+            <button :class="btn(Meeting.mic.v)" @click="Meeting.toggleMic()" :title='if (Meeting.mic.v) "マイクをオフ" else "マイクをオン"'><img :src='if (Meeting.mic.v) "/icons/mic.svg" else "/icons/mic-off.svg"' alt=""></button>
+            <button :class="btn(Meeting.cam.v)" @click="Meeting.toggleCam()" :title='if (Meeting.cam.v) "カメラをオフ" else "カメラをオン"'><img :src='if (Meeting.cam.v) "/icons/cam.svg" else "/icons/cam-off.svg"' alt=""></button>
+            <button class="round" @click="s.devices := true" title="カメラ・マイクの設定"><img src="/icons/gear.svg" alt=""></button>
           </div>
         </div>
         <div class="info">
@@ -160,8 +160,10 @@ def meAvatar = Store.me.mapC(_.map(_.brief))
 .preview video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .noimg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #d1d5db; }
 .toggles { position: absolute; bottom: 1rem; left: 0; right: 0; display: flex; gap: .8rem; justify-content: center; }
-.round { width: 3.2rem; height: 3.2rem; border-radius: 50%; justify-content: center; font-size: 1.3rem; background: rgba(255, 255, 255, .9); border: none; color: #111; }
-.round.off { background: #dc2626; color: #fff; }
+.round { width: 3.8rem; height: 3.8rem; padding: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); border-radius: 50%; justify-content: center; font-size: 1.3rem; background: rgba(255, 255, 255, .9); border: none; color: #111; }
+.round.off { background: #f87171; color: #fff; }
+.round img { width: 2.1rem; height: 2.1rem; pointer-events: none; }
+.round:hover img { transform: scale(1.08); }
 .info { width: 340px; max-width: 100%; }
 .info h1 { margin-bottom: .2rem; }
 .big { font-size: 1rem; padding: .65rem 2rem; border-radius: 999px; margin: .6rem 0; }

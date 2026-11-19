@@ -102,7 +102,8 @@ final class AuthRoutes(d: ApiRoutes.Deps) extends RouteSupport:
       }
 
     case GET -> Root / "api" / "client-config" =>
-      Ok(ClientConfigDto(cfg.devLogin && oidc.isEmpty, oidc.isDefined, cfg.version, d.skuaka.map(_.base), d.recorder.map(_.client.cfg.url)))
+      Ok(ClientConfigDto(cfg.devLogin && oidc.isEmpty, oidc.isDefined, cfg.version, d.skuaka.map(_.base), d.recorder.map(_.client.cfg.url),
+        d.stt.isDefined, d.minutes.map(_.url)))
 
     case req @ GET -> Root / "api" / "me" => authed(req)(u => Ok(u.me))
 

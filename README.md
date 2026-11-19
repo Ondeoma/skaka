@@ -30,6 +30,13 @@ skaka は、チームのための Web 会議システムです（ブラウザだ
 - **録画（保存先は skawau）**: 主催者が会議中に「その他」→「録画する」. 参加者全員に「録画中」と表示する.
   録画する人のブラウザが全員の映像（画面共有があれば大きく）と音を1つにまとめて録り、録り終えると、その人の skawau の「skaka 録画」フォルダに置いて、
   会議に参加したメンバーと共有する（閲覧のみ）. 会議の記録の画面から skawau で開ける. skawau とは設定の画面で OAuth で連携する
+- **文字起こし（自前の Whisper）**: 主催者が会議中に「その他」→「文字起こしを始める」. 参加者全員に「文字起こし中」と表示する.
+  各自のブラウザが自分のマイクの音を話の切れ目ごとに切り出してサーバーへ送り、サーバーが Whisper（OpenAI 互換の API）で日本語の文字にする.
+  音声は人ごとに分かれている（メッシュ）ので、話した人を推定せずに確実に区別できる. 話した人の名前で全員に字幕を出し（「字幕を隠す」もできる）、会議の記録に残す
+- **議事録・要約（skakapo）**: 会議の記録の画面で「skakapo で議事録を作る」. 参加者・文字起こし・チャットを Markdown のファイルにして skakapo に依頼し、
+  エージェントの返事（要約・決まったこと・宿題・話し合ったこと）を取り込む. skakapo の会話で直してもらい「取り込み直す」こともできる.
+  取り込んだ議事録は、頼んだ人の skawau の「skaka 議事録」フォルダに Markdown で置き、会議に参加したメンバーと共有する（閲覧のみ. 取り込み直すと同じファイルを書き換え、版が残る）
+  skakapo とは設定の画面で API トークン（読み書き）を登録して連携する（依頼はその人の skakapo の会話になり、skakapo のクレジットを使う）
 - **API トークンと MCP**: 設定の画面で作成・失効（読み書き / 参照のみ、有効期限）. `Authorization: Bearer skaka_…` で画面と同じ REST API を呼べる.
   `POST /mcp`（Streamable HTTP）で、MCP に対応した AI アシスタントから会議室・会議の記録・会議の予定を扱える
 - 画面の色（自動・ライト・ダーク）、スマホの幅
@@ -37,7 +44,7 @@ skaka は、チームのための Web 会議システムです（ブラウザだ
 技術: Scala 3.3 LTS、Cats Effect 3、http4s 1.0（マイルストーン版. WebSocket）、doobie、Flyway、PostgreSQL 17、
 Scala.js + [Scalactive](https://github.com/Ondeoma/scalactive)、Vite、WebRTC（メッシュ）。設計は [docs/design.md](docs/design.md) を参照してください。
 
-兄弟のシステム: skea（タスク管理）、skiwi（Wiki）、skawau（ファイル共有）、skuaka（カレンダー）。
+兄弟のシステム: skea（タスク管理）、skiwi（Wiki）、skawau（ファイル共有）、skuaka（カレンダー）、skakapo（AI エージェント）。
 
 ## 構成
 
@@ -80,6 +87,12 @@ skuaka の設定の画面で「読み書き」の API トークンを作り、sk
 **skawau と試す（録画）**: skawau の開発環境（画面 :5176）を起動しておくと、`SKAWAU_URL=http://localhost:5176`（`scripts/dev-env.sh` の既定）で連携できます。
 skawau 側の `scripts/dev-env.sh` の `OAUTH_CLIENTS` に skaka（`read write`）が登録してあります。skaka の設定の画面で「skawau と連携する」を押して許可してください。
 
+**文字起こしを試す**: OpenAI 互換の Whisper のサーバー（speaches・faster-whisper-server・whisper.cpp の server など）を手元で起動し、
+`WHISPER_URL=http://localhost:8000/v1 WHISPER_MODEL=<そのサーバーのモデル名> scripts/dev-restart.sh` で起動し直します。
+
+**skakapo と試す（議事録）**: skakapo の開発環境（画面 :5199）を起動しておくと、`SKAKAPO_URL=http://localhost:5199`（`scripts/dev-env.sh` の既定）で連携できます。
+skakapo の設定の画面で「読み書き」の API トークンを作り、skaka の設定の画面に貼り付けてください。
+
 テスト（会議の状態の変化・WebM の長さの補正・OIDC の検証・開発用 IdP と偽の skuaka・skawau を使った通しのテスト. DB は docker-compose.dev.yml）:
 
 ```bash
@@ -116,6 +129,11 @@ Docker: `scripts/dist.sh` のあと `docker build -f deploy/docker/app.Dockerfil
 | `SKAWAU_INTERNAL_URL` | このサーバーから見た skawau の URL（既定は `SKAWAU_URL`） |
 | `RECORDING_DIR` | 録画中の一時ファイルを置くディレクトリ（既定は OS の一時ディレクトリの `skaka-recordings`. 1時間でおよそ 0.5〜1GB） |
 | `RECORDING_MAX_MB` | 1つの録画の上限（既定 8192） |
+| `WHISPER_URL` | 文字起こしに使う Whisper のサーバー（OpenAI 互換の API の `/v1` まで. 例 `http://whisper:8000/v1`）. 未設定なら文字起こしの機能を出さない |
+| `WHISPER_MODEL` | Whisper のモデルの名前（そのサーバーでの名前. 既定 `whisper-1`. 例: speaches なら `Systran/faster-whisper-large-v3`・日本語向けの `kotoba-tech/kotoba-whisper-v2.0-faster`） |
+| `WHISPER_LANGUAGE` / `WHISPER_API_KEY` / `WHISPER_CONCURRENCY` / `WHISPER_PROMPT` | 言語（既定 `ja`）・API キー（要るサーバーだけ. Bearer で送る）・同時に送る数（既定 2）・認識のヒントにする文（社名・用語など） |
+| `SKAKAPO_URL` | 議事録・要約を頼む skakapo の URL（未設定なら議事録の機能を出さない） |
+| `SKAKAPO_INTERNAL_URL` / `SKAKAPO_REQUEST_TYPE` | このサーバーから見た skakapo の URL（既定は `SKAKAPO_URL`）・議事録を頼むときの依頼の種類（項目 `title`・`description` を持つもの. 既定 `other`） |
 | `OAUTH_CLIENTS` | skaka を使う外部のサービス（skuaka）. `[{"id":"skuaka","secret":"…（16文字以上）","redirectUri":"https://…/api/integrations/skaka/callback","name":"skuaka","scopes":["read","write"]}]` |
 | `HTTP_PORT` | 待ち受けるポート（既定 8080） |
 | `STATIC_DIR` | ビルド済みの画面（`dist/static`） |

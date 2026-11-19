@@ -61,6 +61,18 @@ def record(s: State): Unit = {
   }
 }
 
+/** 文字起こし: 主催者だけ（サーバーに Whisper が設定されているとき）. 音声は各自の端末からサーバーへ送り、会議の記録に残す. */
+def transcribe(s: State): Unit = {
+  s.more := false
+  if (Transcriber.notice.v.isDefined) Dialog.confirm("文字起こしを止めますか？（ここまでの文字起こしは会議の記録に残ります）", "止める")(Transcriber.toggle())
+  else Dialog.confirm("文字起こしを始めますか？ 参加者全員に「文字起こし中」と表示され、各自のマイクの音声をサーバーで文字にして、" +
+    "話した人の名前とともに字幕に出し、会議の記録に残します。", "文字起こしを始める", danger = false)(Transcriber.toggle())
+}
+
+def canTranscribe = computed { Store.transcriptionEnabled && Meeting.isHost }
+def transcribing = Transcriber.notice.mapC(_.isDefined)
+def captionsOn = computed { Transcriber.show.v && Transcriber.visible.v.nonEmpty }
+
 def canRecord = computed { Store.skawauEnabled && Meeting.isHost && (Recorder.notice.v.isEmpty || Recorder.mine.v) }
 def recLabel = computed { Recorder.notice.v.fold("")(n => if (Recorder.mine.v) "録画中" else s"録画中（${n.by} さん）") }
 
@@ -95,6 +107,7 @@ def rstyle(r: Reaction): String = s"left: ${r.left}%"
       <span v-if="Recorder.notice.mapC(_.isDefined)" class="rec" title="この会議は録画されています"><i></i>{{ recLabel }}</span>
       <button v-if="Recorder.mine" class="small rec-stop" @click="record(s)">録画を止める</button>
       <span v-if="Recorder.finishing" class="muted small">録画を送っています…</span>
+      <span v-if="transcribing" class="tr" title="この会議は文字起こしされています（話した内容が会議の記録に残ります）">📝 文字起こし中</span>
       <span class="grow"></span>
       <button class="ghost small" title="会議室の URL をコピー" @click='Dom.copy(props.url, "会議室の URL をコピーしました")'>🔗 招待</button>
       <button class="ghost small" :title='if (gallery.v) "スピーカーの表示に（g）" else "ギャラリーの表示に（g）"'
@@ -114,6 +127,9 @@ def rstyle(r: Reaction): String = s"left: ${r.left}%"
           <div v-if="strip.v.nonEmpty" class="strip">
             <div v-for="t in strip" :key="t.key" class="cell"><VideoTile :tile="t" :small="true" /></div>
           </div>
+        </div>
+        <div v-if="captionsOn" class="captions" aria-live="polite">
+          <div v-for="c in Transcriber.visible" :key="c.id" class="cap"><b>{{ c.name }}</b>{{ c.text }}</div>
         </div>
         <div class="floating">
           <div v-for="r in Meeting.reactions" :key="r.id" class="float" :style="rstyle(r)"><span class="emoji">{{ r.emoji }}</span><span class="who">{{ r.name }}</span></div>
@@ -147,6 +163,8 @@ def rstyle(r: Reaction): String = s"left: ${r.left}%"
           <a href="#" @click.prevent="s.devices := true">⚙ カメラ・マイクの設定</a>
           <a href="#" @click.prevent='Dom.copy(props.url, "会議室の URL をコピーしました")'>🔗 会議室の URL をコピー</a>
           <a v-if="canRecord" href="#" @click.prevent="record(s)">{{ if (Recorder.mine.v) "⏹ 録画を止める" else "⏺ 録画する（skawau に保存）" }}</a>
+          <a v-if="canTranscribe" href="#" @click.prevent="transcribe(s)">{{ if (transcribing.v) "📝 文字起こしを止める" else "📝 文字起こしを始める" }}</a>
+          <a v-if="transcribing" href="#" @click.prevent="Transcriber.toggleShow()">{{ if (Transcriber.show.v) "💬 字幕を隠す" else "💬 字幕を出す" }}</a>
           <a v-if="Meeting.isHost" href="#" @click.prevent="Meeting.send(ClientMsg.Lock(!Meeting.locked.v))">{{ if (Meeting.locked.v) "🔓 ロックを外す" else "🔒 会議をロック" }}</a>
           <a v-if="Meeting.isHost" href="#" class="danger" @click.prevent="endAll(s)">⏹ 全員の会議を終了</a>
         </div>
@@ -164,6 +182,11 @@ def rstyle(r: Reaction): String = s"left: ${r.left}%"
 .bar button { color: #e5e7eb; }
 .bar button:hover { background: rgba(255, 255, 255, .08); }
 .body { flex: 1; display: flex; min-height: 0; }
+.tr { color: #93c5fd; font-weight: 600; white-space: nowrap; font-size: .85rem; }
+.captions { position: absolute; left: 50%; bottom: 2.9rem; transform: translateX(-50%); width: min(820px, calc(100% - 1.6rem)); display: flex;
+  flex-direction: column; gap: .25rem; pointer-events: none; z-index: 5; }
+.cap { background: rgba(17, 24, 39, .78); color: #fff; padding: .3rem .7rem; border-radius: 10px; font-size: 1.02rem; line-height: 1.45; }
+.cap b { color: #fde68a; margin-right: .55rem; font-weight: 600; }
 .rec { display: inline-flex; align-items: center; gap: .35rem; color: #fca5a5; font-weight: 600; white-space: nowrap; }
 .rec i { width: .6rem; height: .6rem; border-radius: 50%; background: #ef4444; animation: blink 1.4s ease-in-out infinite; }
 .bar .rec-stop { background: #dc2626; border-color: #dc2626; color: #fff; padding: .1rem .55rem; }
