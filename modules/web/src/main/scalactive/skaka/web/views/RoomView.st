@@ -10,8 +10,7 @@ import scala.util.{Failure, Success}
 
 // 会議室: 入る前の確認（カメラ・マイクのプレビュー、ゲストの名前）→ 待機室 → 会議 → 終わったあと
 case class State(entry: RV[Option[RoomEntryDto]] = RV(None), error: RV[String] = RV(""), guestName: RV[String] = RV(Prefs.get("guestName", "")),
-                 preview: ElementRef[dom.HTMLVideoElement] = ElementRef(), devices: RV[Boolean] = RV(false),
-                 pagehide: RV[Option[js.Function1[dom.Event, Unit]]] = RV(None), timer: RV[Int] = RV(0))
+                 preview: ElementRef[dom.HTMLVideoElement] = ElementRef(), devices: RV[Boolean] = RV(false))
 
 def initState() = State()
 
@@ -22,19 +21,13 @@ def mounted(s: State): Unit = {
   load(s)
   watch(Meeting.streams)((_, _) => attachPreview(s))
   watch(Meeting.phase)((_, p) => if (p == "idle") dom.window.setTimeout(() => attachPreview(s), 0))
-  val before: js.Function1[dom.Event, Unit] = (_: dom.Event) => Meeting.leave()
-  dom.window.addEventListener("pagehide", before)
-  s.pagehide := Some(before)
+  useEventListener[dom.Event](dom.window, "pagehide")(_ => Meeting.leave())
   // 入る前の画面: 会議中の人数を読み直す
-  s.timer := dom.window.setInterval(() => if (Meeting.phase.v == "idle" && s.entry.v.isDefined)
-    Api.entry(code).foreach(e => s.entry := Some(e)), 15000)
+  useInterval(15000)(if (Meeting.phase.v == "idle" && s.entry.v.isDefined) Api.entry(code).foreach(e => s.entry := Some(e)))
+  ()
 }
 
-def unmounted(s: State): Unit = {
-  s.pagehide.v.foreach(f => dom.window.removeEventListener("pagehide", f))
-  dom.window.clearInterval(s.timer.v)
-  Meeting.reset()
-}
+def unmounted(s: State): Unit = Meeting.reset()
 
 def load(s: State): Unit = Api.entry(code).onComplete {
   case Success(e) =>
@@ -57,7 +50,7 @@ def guest(s: State) = s.entry.mapC(_.exists(_.me.isEmpty))
 
 def join(s: State): Unit = s.entry.v.foreach { e =>
   val name = s.guestName.v.trim
-  if (e.me.isEmpty && name.isEmpty) Store.toast("名前を入れてください", error = true)
+  if (e.me.isEmpty && name.isEmpty) Toasts.show("名前を入れてください", error = true)
   else {
     if (e.me.isEmpty) Prefs.set("guestName", name)
     Meeting.join(e.code, e.name, Option.when(e.me.isEmpty)(name))
@@ -76,7 +69,7 @@ def lockedText(s: State) = s.entry.mapC(_.exists(_.locked))
 def loggedIn = Store.me.mapC(_.isDefined)
 def camOff = Meeting.cam.mapC(!_)
 def btn(on: Boolean): String = if (on) "round" else "round off"
-def meAvatar = Store.me.mapC(_.map(_.brief))
+def meAvatar = Store.me.mapC(_.map(_.brief.person))
 </script>
 
 <template>
@@ -110,7 +103,7 @@ def meAvatar = Store.me.mapC(_.map(_.brief))
           <p v-if="Meeting.micError.mapC(_.nonEmpty)" class="small error">マイク: {{ Meeting.micError }}</p>
           <p v-if="Meeting.camError.mapC(_.nonEmpty)" class="small error">カメラ: {{ Meeting.camError }}</p>
           <form @submit.prevent="join(s)">
-            <label v-if="guest(s)" class="field"><span>あなたの名前（ゲスト）</span><input type="text" v-model="s.guestName" maxlength="50" autofocus></label>
+            <label v-if="guest(s)" class="field"><span>あなたの名前（ゲスト）</span><input type="text" v-model="s.guestName" maxlength="50" v-focus></label>
             <button type="submit" class="primary big">会議に参加する</button>
           </form>
           <p v-if="guest(s)" class="muted small">ゲストは、主催者が許可してから会議に入ります。チームのメンバーは <a href="#" @click.prevent="Api.login()">ログイン</a> してください。</p>

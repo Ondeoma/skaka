@@ -10,24 +10,22 @@ def initState() = State()
 
 def mounted(s: State): Unit = {
   // 許可の画面から戻ってきたとき（?skawau=…）
-  val q = dom.window.location.search
-  if (q.contains("skawau=")) {
-    val r = new dom.URLSearchParams(q).get("skawau")
-    if (r == "connected") Store.toast(s"${AppNames.nameOf("skawau")} と連携しました。会議の録画を ${AppNames.nameOf("skawau")} に保存できます")
-    else if (r == "denied") Store.toast(s"${AppNames.nameOf("skawau")} との連携を取りやめました")
-    else if (r == "readonly") Store.toast(s"${AppNames.nameOf("skawau")} が書き込みを許可していないため、連携できませんでした（${AppNames.nameOf("skawau")} の管理者に確認してください）", error = true)
-    else Store.toast(s"${AppNames.nameOf("skawau")} と連携できませんでした。もう一度試してください", error = true)
-    dom.window.history.replaceState(null, "", dom.window.location.pathname)
+  Router.queryParam("skawau").v.foreach { r =>
+    if (r == "connected") Toasts.show(s"${AppNames.nameOf("skawau")} と連携しました。会議の録画を ${AppNames.nameOf("skawau")} に保存できます")
+    else if (r == "denied") Toasts.show(s"${AppNames.nameOf("skawau")} との連携を取りやめました")
+    else if (r == "readonly") Toasts.show(s"${AppNames.nameOf("skawau")} が書き込みを許可していないため、連携できませんでした（${AppNames.nameOf("skawau")} の管理者に確認してください）", error = true)
+    else Toasts.show(s"${AppNames.nameOf("skawau")} と連携できませんでした。もう一度試してください", error = true)
+    Router.setQuery("skawau" -> None)
   }
   load(s)
 }
 
-def load(s: State): Unit = Store.report(Api.skawau())(l => s.link := Some(l))
+def load(s: State): Unit = Toasts.report(Api.skawau())(l => s.link := Some(l))
 
 def connect(): Unit = dom.window.location.href = Api.connectSkawauUrl("/settings")
 
 def unlink(s: State): Unit = Dialog.confirm(s"${AppNames.nameOf("skawau")} との連携をやめますか？（${AppNames.nameOf("skawau")} に保存した録画はそのまま残ります）", "やめる") {
-  Store.report(Api.unlinkSkawau())(_ => load(s))
+  Toasts.report(Api.unlinkSkawau())(_ => load(s))
 }
 
 def linked(s: State) = s.link.mapC(_.exists(_.linked))

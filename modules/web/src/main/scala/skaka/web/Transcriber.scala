@@ -185,7 +185,7 @@ object Transcriber {
       val ago = (js.Date.now() - startedAt).toLong
       Api.speech(Meeting.speechKey, ago, wav(parts)).failed.foreach {
         case ApiError(503, m) if js.Date.now() - lastError > 30000 =>
-          lastError = js.Date.now(); Store.toast(m, error = true)
+          lastError = js.Date.now(); Toasts.show(m, error = true)
         case _ => ()
       }
     }

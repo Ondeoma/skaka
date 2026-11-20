@@ -7,8 +7,7 @@ import org.scalajs.dom
 import java.util.UUID
 
 // 会議の詳細: 議事録・要約（skakapo）、録画（skawau）、参加者（入った・出た時刻）、文字起こしとチャットの記録（テキストで書き出せる）
-case class State(detail: RV[Option[MeetingDetailDto]] = RV(None), error: RV[String] = RV(""), timer: RV[Option[Int]] = RV(None),
-                 asking: RV[Boolean] = RV(false))
+case class State(detail: RV[Option[MeetingDetailDto]] = RV(None), error: RV[String] = RV(""), asking: ActionState = useAction())
 
 def initState() = State()
 
@@ -18,11 +17,10 @@ def mounted(s: State): Unit = {
   pageTitle("会議の記録")
   if (id.isEmpty) s.error := "会議が見つかりません" else load(s)
   // 録画中・保存中のもの、作っている議事録があれば、終わるまで読み直す
-  s.timer := Some(dom.window.setInterval(() => if (recs(s).v.exists(r => r.status == RecordingStatus.Recording || r.status == RecordingStatus.Saving) ||
-    mins(s).v.exists(_.status == MinutesStatus.Running)) load(s), 4000))
+  useInterval(4000)(if (recs(s).v.exists(r => r.status == RecordingStatus.Recording || r.status == RecordingStatus.Saving) ||
+    mins(s).v.exists(_.status == MinutesStatus.Running)) load(s))
+  ()
 }
-
-def unmounted(s: State): Unit = s.timer.v.foreach(dom.window.clearInterval)
 
 def load(s: State): Unit = id.foreach(i => Api.meeting(i).onComplete {
   case scala.util.Success(d) => s.detail := Some(d)
@@ -30,10 +28,10 @@ def load(s: State): Unit = id.foreach(i => Api.meeting(i).onComplete {
 }(scala.scalajs.concurrent.JSExecutionContext.Implicits.queue))
 
 def recs(s: State) = s.detail.mapC(_.toList.flatMap(_.recordings))
-def retry(s: State, r: RecordingDto): Unit = Store.report(Api.retryRecording(r.id)) { _ => Store.toast("もう一度保存しています"); load(s) }
+def retry(s: State, r: RecordingDto): Unit = Toasts.report(Api.retryRecording(r.id)) { _ => Toasts.show("もう一度保存しています"); load(s) }
 def remove(s: State, r: RecordingDto): Unit =
   Dialog.confirm(s"録画「${r.title}」を一覧から消しますか？" + (if (r.fileUrl.isDefined) s"（${AppNames.nameOf("skawau")} に保存したファイルは残ります. 消すときは ${AppNames.nameOf("skawau")} で消してください）" else ""), "消す") {
-    Store.report(Api.deleteRecording(r.id))(_ => load(s))
+    Toasts.report(Api.deleteRecording(r.id))(_ => load(s))
   }
 def size(r: RecordingDto): String = if (r.bytes >= 1048576) f"${r.bytes / 1048576.0}%.1f MB" else s"${r.bytes / 1024} KB"
 def recSpan(r: RecordingDto): String =
@@ -55,13 +53,8 @@ def mins(s: State) = s.detail.mapC(_.toList.flatMap(_.minutes))
 /** 参加者・文字起こし・チャットの記録をテキストに. */
 def transcript(s: State): String = s.detail.v.fold("")(d => MeetingText.markdown(d, title(s).v, Time.time))
 
-def save(text: String, name: String): Unit = {
-  val blob = new dom.Blob(scala.scalajs.js.Array(text), new dom.BlobPropertyBag { `type` = "text/markdown" })
-  val a = dom.document.createElement("a").asInstanceOf[dom.HTMLAnchorElement]
-  a.href = dom.URL.createObjectURL(blob)
-  a.asInstanceOf[scala.scalajs.js.Dynamic].download = name
-  a.click()
-}
+def save(text: String, name: String): Unit =
+  Dom.download(new dom.Blob(scala.scalajs.js.Array(text), new dom.BlobPropertyBag { `type` = "text/markdown" }), name)
 def day(s: State): String = m(s).v.map(_.startedAt.take(10)).getOrElse("")
 def download(s: State): Unit = save(transcript(s), s"meeting-${day(s)}.md")
 
@@ -70,13 +63,13 @@ def canAsk(s: State) = computed { Store.skakapoEnabled && (lines(s).v.nonEmpty |
 def ask(s: State): Unit = id.foreach { i =>
   Dialog.confirm(s"${AppNames.nameOf("skakapo")} に議事録・要約を頼みますか？ 参加者・文字起こし・チャットを ${AppNames.nameOf("skakapo")} に渡し、あなたの ${AppNames.nameOf("skakapo")} の依頼として作ってもらいます" +
     s"（${AppNames.nameOf("skakapo")} のクレジットを使います）。", "頼む", danger = false) {
-    Store.submit(s.asking)(Api.requestMinutes(i)) { _ => Store.toast(s"${AppNames.nameOf("skakapo")} に議事録を頼みました。できたらここに出ます"); load(s) }
+    Store.submit(s.asking)(Api.requestMinutes(i)) { _ => Toasts.show(s"${AppNames.nameOf("skakapo")} に議事録を頼みました。できたらここに出ます"); load(s) }
   }
 }
-def refresh(s: State, x: MinutesDto): Unit = Store.report(Api.refreshMinutes(x.id)) { _ => Store.toast(s"${AppNames.nameOf("skakapo")} の返事を取り込みました"); load(s) }
+def refresh(s: State, x: MinutesDto): Unit = Toasts.report(Api.refreshMinutes(x.id)) { _ => Toasts.show(s"${AppNames.nameOf("skakapo")} の返事を取り込みました"); load(s) }
 def removeMinutes(s: State, x: MinutesDto): Unit =
-  Dialog.confirm(s"この議事録を消しますか？（${AppNames.nameOf("skakapo")} の会話は残ります）", "消す")(Store.report(Api.deleteMinutes(x.id))(_ => load(s)))
-def fileMinutes(s: State, x: MinutesDto): Unit = Store.report(Api.fileMinutes(x.id)) { _ => Store.toast(s"${AppNames.nameOf("skawau")} に保存しました"); load(s) }
+  Dialog.confirm(s"この議事録を消しますか？（${AppNames.nameOf("skakapo")} の会話は残ります）", "消す")(Toasts.report(Api.deleteMinutes(x.id))(_ => load(s)))
+def fileMinutes(s: State, x: MinutesDto): Unit = Toasts.report(Api.fileMinutes(x.id)) { _ => Toasts.show(s"${AppNames.nameOf("skawau")} に保存しました"); load(s) }
 def minFileUrl(x: MinutesDto): String = x.fileUrl.getOrElse("")
 def minClass(x: MinutesDto): String = s"badge mn-${x.status}"
 def minutesFile(s: State): String = s"minutes-${day(s)}.md"
@@ -95,7 +88,7 @@ def minutesFile(s: State): String = s"minutes-${day(s)}.md"
       </div>
       <section v-if="Store.skakapoEnabled" class="panel top">
         <div class="row head"><h2 class="grow">議事録・要約</h2>
-          <button v-if="canAsk(s)" class="primary" :disabled="s.asking" @click="ask(s)">✨ {{ AppNames.of("skakapo") }} で議事録を作る</button></div>
+          <button v-if="canAsk(s)" class="primary" :disabled="s.asking.busy" @click="ask(s)">✨ {{ AppNames.of("skakapo") }} で議事録を作る</button></div>
         <p v-if="mins(s).mapC(_.isEmpty)" class="muted small">{{ if (canAsk(s).v) s"文字起こしとチャットをもとに、${AppNames.of("skakapo").v}（AI エージェント）が議事録と要約を作ります。設定の画面で ${AppNames.of("skakapo").v} と連携してから使ってください。" else "文字起こしもチャットもないため、議事録は作れません。会議中に主催者が「その他」→「文字起こしを始める」を押すと、文字起こしが残ります。" }}</p>
         <div v-for="x in mins(s)" :key="x.id" class="mn">
           <div class="row mhead">

@@ -18,6 +18,9 @@ object Main {
     // すべての API の要求に X-Skaka を付ける（サーバーはこれのない更新を CSRF として断る. Api・Pwa・Observe で共通）
     sbirds.web.Fetch.extraHeaders = Map("X-Skaka" -> "1")
     Theme.apply()
+    // お知らせは 5 秒（エラーは 9 秒）で消し、同時に 4 つまで出す
+    Toasts.duration = 5000
+    Toasts.max = 4
     // skorimako のブラウザの観測（設定があるときだけ）と、PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
     Observe.start()
     Pwa.register()

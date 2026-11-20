@@ -3,19 +3,16 @@ import skaka.web.*
 import skaka.shared.*
 import org.scalajs.dom
 
-import scala.scalajs.js
-
 // 会議中の画面: 映像（ギャラリー / スピーカー）、下の操作の列、右の欄（チャット・参加者）、リアクション
 case class Props(url: String)
 
-case class State(reactions: RV[Boolean] = RV(false), more: RV[Boolean] = RV(false), devices: RV[Boolean] = RV(false),
-                 keys: RV[Option[js.Function1[dom.KeyboardEvent, Unit]]] = RV(None))
+case class State(reactions: RV[Boolean] = RV(false), more: RV[Boolean] = RV(false), devices: RV[Boolean] = RV(false))
 
 def initState() = State()
 
 def mounted(s: State): Unit = {
-  val f: js.Function1[dom.KeyboardEvent, Unit] = (e: dom.KeyboardEvent) =>
-    if (!Dom.typing(e) && !e.ctrlKey && !e.metaKey && !e.altKey && Dialog.current.v.isEmpty) {
+  useEventListener[dom.KeyboardEvent](dom.window, "keydown") { e =>
+    if (!Dom.isTyping(e) && !e.ctrlKey && !e.metaKey && !e.altKey && Dialog.current.v.isEmpty) {
       val done = e.key match {
         case "m" => Meeting.toggleMic(); true
         case "v" => Meeting.toggleCam(); true
@@ -27,11 +24,9 @@ def mounted(s: State): Unit = {
       }
       if (done) e.preventDefault()
     }
-  dom.window.addEventListener("keydown", f)
-  s.keys := Some(f)
+  }
+  ()
 }
-
-def unmounted(s: State): Unit = s.keys.v.foreach(f => dom.window.removeEventListener("keydown", f))
 
 def togglePanel(p: String): Unit = {
   Meeting.panel := (if (Meeting.panel.v == p) "" else p)
@@ -51,7 +46,7 @@ def react(s: State, e: String): Unit = { Meeting.react(e); s.reactions := false 
 def record(s: State): Unit = {
   s.more := false
   if (Recorder.mine.v) Dialog.confirm(s"録画を止めますか？（${AppNames.nameOf("skawau")} に保存します）", "録画を止める")(Recorder.stop())
-  else Store.report(Api.skawau()) { l =>
+  else Toasts.report(Api.skawau()) { l =>
     if (!l.linked)
       Dialog.confirm(s"録画は ${AppNames.nameOf("skawau")} に保存します。${AppNames.nameOf("skawau")} と連携していないため、新しいタブで連携の画面を開きますか？（連携したら、もう一度録画を押してください）",
         "連携の画面を開く", danger = false)(dom.window.open(Api.connectSkawauUrl("/settings"), "_blank"))

@@ -77,8 +77,7 @@ object Meeting {
   val canAdmit: CRV[Boolean] = computed { self.v.exists(me => me.host || (!me.guest && !peers.v.exists(_.host))) }
 
   /** 参加者のアイコン用（ゲストは接続の id から色を決める）. */
-  def brief(p: PeerInfo): UserBrief =
-    UserBrief(p.userId.getOrElse(new java.util.UUID(0, p.id.hashCode)), p.name, None, p.avatarUrl)
+  def person(p: PeerInfo): Person = Person(p.userId.fold(p.id)(_.toString), p.name, p.avatarUrl)
 
   /** 画面の大きさ（ギャラリーの並べ方に使う）. */
   val viewport: RV[(Int, Int)] = RV((dom.window.innerWidth.toInt, dom.window.innerHeight.toInt))
@@ -348,8 +347,8 @@ object Meeting {
 
   private def startShare(): Unit =
     if (js.isUndefined(mediaDevices) || js.isUndefined(mediaDevices.getDisplayMedia))
-      Store.toast("このブラウザは画面の共有に対応していません", error = true)
-    else if (peers.v.exists(_.media.screen.isDefined)) Store.toast("ほかの人が画面を共有しています", error = true)
+      Toasts.show("このブラウザは画面の共有に対応していません", error = true)
+    else if (peers.v.exists(_.media.screen.isDefined)) Toasts.show("ほかの人が画面を共有しています", error = true)
     else
       mediaDevices.getDisplayMedia(js.Dynamic.literal(video = screenConstraint, audio = true))
         .asInstanceOf[js.Promise[js.Dynamic]].toFuture.onComplete {
@@ -512,7 +511,7 @@ object Meeting {
       Sound.play("leave")
     case ServerMsg.Updated(p) =>
       if (p.id == selfId) {
-        if (p.host && !isHost) Store.toast("主催者になりました")
+        if (p.host && !isHost) Toasts.show("主催者になりました")
         self := Some(p.copy(media = self.v.map(_.media).getOrElse(p.media)))
       } else peers := peers.v.map(x => if (x.id == p.id) p else x)
     case ServerMsg.Signal(from, data) =>
@@ -523,7 +522,7 @@ object Meeting {
     case ServerMsg.Media(id, st) =>
       val before = peers.v.find(_.id == id)
       peers := peers.v.map(p => if (p.id == id) p.copy(media = st) else p)
-      if (before.exists(b => !b.media.hand && st.hand)) Store.toast(s"✋ ${name(id)} さんが手を挙げました")
+      if (before.exists(b => !b.media.hand && st.hand)) Toasts.show(s"✋ ${name(id)} さんが手を挙げました")
       streams := streams.v + 1
     case ServerMsg.Chat(msg) =>
       chat := (chat.v :+ msg).takeRight(500)
@@ -538,31 +537,31 @@ object Meeting {
       dom.window.setTimeout(() => reactions := reactions.v.filterNot(_.id == r.id), 4200)
     case ServerMsg.Lobby(ws) =>
       if (ws.size > lobby.v.size) {
-        Store.toast(s"${ws.lastOption.map(_.name).getOrElse("")} さんが待機室にいます"); Sound.play("knock")
+        Toasts.show(s"${ws.lastOption.map(_.name).getOrElse("")} さんが待機室にいます"); Sound.play("knock")
       }
       lobby := ws
     case ServerMsg.MuteRequested(by) =>
       if (mic.v) toggleMic()
-      Store.toast(s"$by さんがあなたのマイクをオフにしました")
+      Toasts.show(s"$by さんがあなたのマイクをオフにしました")
     case ServerMsg.HandLowered(by) =>
       hand := false
       publish()
-      Store.toast(s"$by さんがあなたの挙手を下ろしました")
+      Toasts.show(s"$by さんがあなたの挙手を下ろしました")
     case ServerMsg.Locked(lk, by) =>
       locked := lk
-      Store.toast(if (lk) s"$by さんが会議をロックしました" else s"$by さんが会議のロックを外しました")
+      Toasts.show(if (lk) s"$by さんが会議をロックしました" else s"$by さんが会議のロックを外しました")
     case ServerMsg.Recording(info) =>
-      if (info.isDefined && !Recorder.mine.v) Store.toast(s"${info.get.by} さんが録画を始めました")
-      if (info.isEmpty && Recorder.notice.v.isDefined && !Recorder.mine.v) Store.toast("録画が終わりました")
+      if (info.isDefined && !Recorder.mine.v) Toasts.show(s"${info.get.by} さんが録画を始めました")
+      if (info.isEmpty && Recorder.notice.v.isDefined && !Recorder.mine.v) Toasts.show("録画が終わりました")
       Recorder.notice := info
     case ServerMsg.Transcribing(info) =>
       if (info.isDefined && Transcriber.notice.v.isEmpty)
-        Store.toast(if (self.v.exists(_.name == info.get.by) && isHost) "文字起こしを始めました"
+        Toasts.show(if (self.v.exists(_.name == info.get.by) && isHost) "文字起こしを始めました"
         else s"${info.get.by} さんが文字起こしを始めました")
-      if (info.isEmpty && Transcriber.notice.v.isDefined) Store.toast("文字起こしが終わりました")
+      if (info.isEmpty && Transcriber.notice.v.isDefined) Toasts.show("文字起こしが終わりました")
       Transcriber.set(info)
     case ServerMsg.Caption(line) => Transcriber.caption(line)
-    case ServerMsg.Error(msg) => Store.toast(msg, error = true)
+    case ServerMsg.Error(msg) => Toasts.show(msg, error = true)
     case ServerMsg.Pong() => ()
   }
 

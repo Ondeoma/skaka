@@ -46,7 +46,7 @@ def name(props: Props): String = {
 def micOff(props: Props): Boolean = !props.tile.screen && info(props).exists(!_.media.audio)
 def handUp(props: Props): Boolean = !props.tile.screen && info(props).exists(_.media.hand)
 def host(props: Props): Boolean = !props.tile.screen && info(props).exists(_.host)
-def user(props: Props): Option[UserBrief] = info(props).map(Meeting.brief)
+def user(props: Props): Option[Person] = info(props).map(Meeting.person)
 def link(props: Props): String = if (props.tile.peer == "self") "connected" else Meeting.links.v.getOrElse(props.tile.peer, "connecting")
 def cls(props: Props): String = {
   val speaking = !props.tile.screen && Meeting.speaking.v.contains(props.tile.peer)

@@ -64,19 +64,19 @@ object Recorder {
 
   /** 録画を始める（サーバーに知らせてから録り始める）. */
   def start(share: Boolean = true): Unit =
-    if (!supported) Store.toast("このブラウザは録画に対応していません（Chrome・Edge・Firefox・Safari の新しい版を使ってください）", error = true)
+    if (!supported) Toasts.show("このブラウザは録画に対応していません（Chrome・Edge・Firefox・Safari の新しい版を使ってください）", error = true)
     else if (rec.isEmpty && !finishing.v) mimeType match {
-      case None => Store.toast("このブラウザで使える録画の形式がありません", error = true)
+      case None => Toasts.show("このブラウザで使える録画の形式がありません", error = true)
       case Some(mime) =>
         Api.startRecording(RecordingStartReq(Meeting.code.v, mime, share)).onComplete {
-          case Failure(e) => Store.error(e)
+          case Failure(e) => Toasts.error(e)
           case Success(r) =>
             Try(begin(r.id, mime)) match {
-              case Success(_) => Store.toast("録画を始めました。参加者全員に「録画中」と表示されます")
+              case Success(_) => Toasts.show("録画を始めました。参加者全員に「録画中」と表示されます")
               case Failure(e) =>
                 release()
                 Api.deleteRecording(r.id).failed.foreach(_ => ())
-                Store.toast(s"録画を始められませんでした: ${e.getMessage}", error = true)
+                Toasts.show(s"録画を始められませんでした: ${e.getMessage}", error = true)
             }
         }
     }
@@ -118,17 +118,18 @@ object Recorder {
       if (blob.size > 0 && !failed) enqueue(id, blob)
     }
     m.onstop = (_: js.Any) => finish(id)
-    m.onerror = (e: js.Dynamic) => { Store.toast("録画が止まりました", error = true); stop() }
+    m.onerror = (e: js.Dynamic) => { Toasts.show("録画が止まりました", error = true); stop() }
     m.start(SliceMs)
     startedAt = js.Date.now()
     mine := true
     // 背景のタブでも描き続ける
     ticker = Some(Ticker.every(1000 / Fps)(() => tick()))
-    dom.window.addEventListener("beforeunload", warn)
+    // 録画中に画面を閉じようとしたら確かめる
+    unloadGuard =
+      Some(useEventListener[dom.BeforeUnloadEvent](dom.window, "beforeunload")(e => if (mine.v) e.preventDefault()))
   }
 
-  private val warn: js.Function1[dom.BeforeUnloadEvent, Unit] =
-    (e: dom.BeforeUnloadEvent) => if (mine.v) e.preventDefault()
+  private var unloadGuard: Option[EffectHandle] = None
 
   /** 断片を順に送る（失敗したら少し待って送り直す. 録画が終わっている・上限を超えたなどは止める）. */
   private def enqueue(id: UUID, blob: dom.Blob): Unit = {
@@ -143,7 +144,7 @@ object Recorder {
       }
     sending = sending.flatMap(_ => if (failed) Future.unit else attempt(6, 1000)).recover { case e =>
       failed = true
-      Store.toast(s"録画を送れませんでした（${e.getMessage}）。録画を止めます", error = true)
+      Toasts.show(s"録画を送れませんでした（${e.getMessage}）。録画を止めます", error = true)
       stop()
     }
   }
@@ -155,15 +156,16 @@ object Recorder {
     sending.flatMap(_ => Api.finishRecording(id, duration)).onComplete { r =>
       finishing := false
       r match {
-        case Success(_) => Store.toast(s"録画を終えました。${AppNames.nameOf("skawau")} に保存しています（会議の記録から開けます）")
-        case Failure(e) => Store.error(e)
+        case Success(_) => Toasts.show(s"録画を終えました。${AppNames.nameOf("skawau")} に保存しています（会議の記録から開けます）")
+        case Failure(e) => Toasts.error(e)
       }
     }
   }
 
   /** 録画の道具を片付ける（送っている断片は送り終える）. */
   private def release(): Unit = {
-    dom.window.removeEventListener("beforeunload", warn)
+    unloadGuard.foreach(_.stop())
+    unloadGuard = None
     ticker.foreach(_())
     ticker = None
     media.foreach(m => Try(m.stream.getTracks().asInstanceOf[js.Array[js.Dynamic]].foreach(_.stop())))

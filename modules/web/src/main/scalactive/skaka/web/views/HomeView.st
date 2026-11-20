@@ -7,27 +7,26 @@ import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 
 // ホーム: すぐに会議を始める・コードで入る・会議室の一覧・skuaka の今後の予定
 case class State(code: RV[String] = RV(""), link: RV[Option[TokenLinkDto]] = RV(None),
-                 upcoming: RV[Option[List[UpcomingDto]]] = RV(None), upError: RV[String] = RV(""), timer: RV[Int] = RV(0))
+                 upcoming: RV[Option[List[UpcomingDto]]] = RV(None), upError: RV[String] = RV(""))
 
 def initState() = State()
 
 def mounted(s: State): Unit = {
   pageTitle("会議室")
   Store.loadRooms()
-  if (Store.skuakaEnabled) Store.report(Api.tokenLink("skuaka")) { l =>
+  if (Store.skuakaEnabled) Toasts.report(Api.tokenLink("skuaka")) { l =>
     s.link := Some(l)
     if (l.linked) loadUpcoming(s)
   }
   // 会議中の人数は30秒ごと、予定は5分ごとに読み直す
   var n = 0
-  s.timer := window.setInterval(() => {
+  useInterval(30000) {
     n += 1
     Store.loadRooms()
     if (n % 10 == 0 && s.link.v.exists(_.linked)) loadUpcoming(s)
-  }, 30000)
+  }
+  ()
 }
-
-def unmounted(s: State): Unit = window.clearInterval(s.timer.v)
 
 def loadUpcoming(s: State): Unit =
   Api.upcoming(Time.today(), Time.addDays(Time.today(), 7)).onComplete {
@@ -44,18 +43,18 @@ def startNow(): Unit = personal.v.foreach(go)
 
 def enter(s: State): Unit = RoomCode.parse(s.code.v) match {
   case Some(c) => Router.go(s"/r/$c")
-  case None    => Store.toast("会議室のコード（abc-defg-hij）か URL を入れてください", error = true)
+  case None    => Toasts.show("会議室のコード（abc-defg-hij）か URL を入れてください", error = true)
 }
 
 def remove(r: RoomDto): Unit =
   if (r.isOwner) Dialog.confirm(s"会議室「${r.name}」を削除しますか？（URL は使えなくなります. 会議の履歴も消えます）", "削除") {
-    Store.report(Api.deleteRoom(r.code))(_ => Store.loadRooms())
+    Toasts.report(Api.deleteRoom(r.code))(_ => Store.loadRooms())
   }
-  else Store.report(Api.forgetRoom(r.code))(_ => Store.loadRooms())
+  else Toasts.report(Api.forgetRoom(r.code))(_ => Store.loadRooms())
 
 def attach(s: State, e: UpcomingDto): Unit =
-  Store.report(Api.attachRoom(e.eventId)) { r =>
-    Store.toast(s"「${e.title}」に会議室を付けました")
+  Toasts.report(Api.attachRoom(e.eventId)) { r =>
+    Toasts.show(s"「${e.title}」に会議室を付けました")
     Store.loadRooms()
     loadUpcoming(s)
   }

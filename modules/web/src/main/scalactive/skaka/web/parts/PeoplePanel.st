@@ -10,7 +10,7 @@ def initState() = State()
 def everyone = computed { Meeting.self.v.toList ++ Meeting.peers.v }
 def isSelf(p: PeerInfo): Boolean = p.id == Meeting.selfId
 def label(p: PeerInfo): String = p.name + (if (isSelf(p)) "（あなた）" else "") + (if (p.guest) "（ゲスト）" else "")
-def user(p: PeerInfo): Option[UserBrief] = Some(Meeting.brief(p))
+def user(p: PeerInfo): Option[Person] = Some(Meeting.person(p))
 def toggleMenu(s: State, id: String): Unit = s.menu := (if (s.menu.v == id) "" else id)
 def act(s: State, m: ClientMsg): Unit = { s.menu := ""; Meeting.send(m) }
 def remove(s: State, p: PeerInfo): Unit = {

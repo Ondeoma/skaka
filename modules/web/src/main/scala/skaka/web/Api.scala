@@ -11,52 +11,18 @@ import scala.concurrent.Future
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 import scala.scalajs.js
 
-/** API の呼び出しのエラー. */
-final case class ApiError(status: Int, message: String) extends Exception(message)
-
-/** バックエンドの REST API. 401 はログインへ（loginOn401 = false なら呼んだ側で扱う）、エラーは {"error": ...} の文言にする. */
-object Api {
-
-  /** fetch の設定（sbirds-lib の Fetch. 更新の要求に付ける X-Skaka は Main で Fetch.extraHeaders に入れる）. */
-  def init(method: dom.HttpMethod, body: Option[String] = None): dom.RequestInit = sbirds.web.Fetch.init(method, body)
-
-  private def request(method: dom.HttpMethod,
-                      url: String,
-                      body: Option[Json] = None,
-                      loginOn401: Boolean = true): Future[Option[Json]] = {
-    dom.fetch(url, init(method, body.map(_.noSpaces))).toFuture.flatMap { res =>
-      if (res.status == 401 && loginOn401) {
-        if (!dom.window.location.pathname.startsWith("/login")) login()
-        Future.failed(ApiError(401, "ログインしてください"))
-      } else if (!res.ok) {
-        res.text().toFuture.recover(_ => "").flatMap { t =>
-          val msg = parse(
-            t
-          ).toOption.flatMap(_.hcursor.get[String]("error").toOption).getOrElse(s"${res.status} ${res.statusText}")
-          Future.failed(ApiError(res.status, msg))
-        }
-      } else if (res.status == 204) Future.successful(None)
-      else res.text().toFuture.map(t => if (t.isEmpty) None else Some(parse(t).fold(throw _, identity)))
-    }
-  }
+/** バックエンドの REST API（共通部分は sbirds-lib の ApiBase. 更新の要求に付ける X-Skaka は Main で Fetch.extraHeaders に入れる）. */
+object Api extends sbirds.web.ApiBase {
 
   /** ログインの画面へ（戻ってくる先は今の画面）. */
-  def login(): Unit = {
-    val back = dom.window.location.pathname + dom.window.location.search
-    dom.window.location.href = "/auth/login?returnTo=" + js.URIUtils.encodeURIComponent(back)
-  }
+  def login(): Unit =
+    dom.window.location.href = loginUrl(dom.window.location.pathname + dom.window.location.search)
 
-  private def as[A: Decoder](j: Option[Json]): A =
-    j.getOrElse(Json.Null).as[A].fold(e => throw ApiError(0, e.getMessage), identity)
-
-  def get[A: Decoder](url: String): Future[A] = request(dom.HttpMethod.GET, url).map(as[A])
-  def post[A: Decoder](url: String, body: Json = Json.obj()): Future[A] =
-    request(dom.HttpMethod.POST, url, Some(body)).map(as[A])
-  def put[A: Decoder](url: String, body: Json): Future[A] = request(dom.HttpMethod.PUT, url, Some(body)).map(as[A])
-  def patch[A: Decoder](url: String, body: Json): Future[A] = request(dom.HttpMethod.PATCH, url, Some(body)).map(as[A])
-  def delete(url: String): Future[Unit] = request(dom.HttpMethod.DELETE, url).map(_ => ())
-
-  def enc(s: String): String = js.URIUtils.encodeURIComponent(s)
+  /** 401 でもログインへ移らない要求（呼んだ側で扱う）. */
+  private def requestNoLogin(method: dom.HttpMethod, url: String, body: Option[Json] = None): Future[Option[Json]] =
+    dom.fetch(url, init(method, body.map(_.noSpaces))).toFuture.flatMap { res =>
+      if (res.status == 401) Future.failed(ApiError(401, "ログインしてください")) else handle(res)
+    }
 
   // ---------------------------------------------------------------- 認証・自分
 
@@ -71,12 +37,6 @@ object Api {
   def users(q: String): Future[List[UserBrief]] = get[List[UserBrief]]("/api/users?q=" + enc(q))
   def updateMe(r: UpdateMeReq): Future[MeDto] = patch[MeDto]("/api/me", r.asJson)
 
-  // ---------------------------------------------------------------- API トークン
-
-  def tokens(): Future[List[ApiTokenDto]] = get[List[ApiTokenDto]]("/api/tokens")
-  def createToken(r: ApiTokenReq): Future[ApiTokenCreated] = post[ApiTokenCreated]("/api/tokens", r.asJson)
-  def revokeToken(id: UUID): Future[Unit] = delete(s"/api/tokens/$id")
-
   // ---------------------------------------------------------------- 会議室
 
   def rooms(): Future[List[RoomDto]] = get[List[RoomDto]]("/api/rooms")
@@ -88,13 +48,12 @@ object Api {
 
   /** 入る前の画面の情報（ログインしていなくても読める. 401 でもログインへは移らない）. */
   def entry(code: String): Future[RoomEntryDto] =
-    request(dom.HttpMethod.GET, s"/api/rooms/${enc(code)}/entry", loginOn401 = false).map(as[RoomEntryDto])
+    requestNoLogin(dom.HttpMethod.GET, s"/api/rooms/${enc(code)}/entry").map(as[RoomEntryDto])
   def join(code: String, guestName: Option[String]): Future[JoinDto] =
-    request(
+    requestNoLogin(
       dom.HttpMethod.POST,
       s"/api/rooms/${enc(code)}/join",
-      Some(JoinReq(guestName).asJson),
-      loginOn401 = false
+      Some(JoinReq(guestName).asJson)
     ).map(as[JoinDto])
 
   // ---------------------------------------------------------------- 会議の履歴
@@ -169,6 +128,6 @@ object Api {
   def fileMinutes(id: UUID): Future[Unit] = post[Json](s"/api/minutes/$id/file").map(_ => ())
 
   /** アイコンを保存する（画像そのものを送る）・消す. */
-  def uploadAvatar(image: dom.Blob): Future[MeDto] = putBlob("/api/me/avatar", image, image.`type`).map(as[MeDto])
+  def uploadAvatar(image: dom.Blob): Future[MeDto] = putRaw[MeDto]("/api/me/avatar", image, Some(image.`type`))
   def deleteAvatar(): Future[MeDto] = request(dom.HttpMethod.DELETE, "/api/me/avatar").map(as[MeDto])
 }

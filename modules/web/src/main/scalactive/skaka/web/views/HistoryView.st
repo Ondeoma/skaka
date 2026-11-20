@@ -10,7 +10,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = { pageTitle("会議の履歴"); load(s, None) }
 
-def load(s: State, before: Option[String]): Unit = Store.report(Api.meetings(before = before)) { ms =>
+def load(s: State, before: Option[String]): Unit = Toasts.report(Api.meetings(before = before)) { ms =>
   s.list := s.list.v ++ ms
   s.more := ms.size >= 50
   s.loaded := true

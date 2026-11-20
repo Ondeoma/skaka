@@ -48,7 +48,7 @@ object Background {
       cover(c.getContext("2d").asInstanceOf[js.Dynamic], img, 1280, 720)
       val data = c.toDataURL("image/jpeg", 0.85)
       Try(dom.window.localStorage.setItem("skaka.bg.custom", data)).fold(
-        _ => Store.toast("画像が大きすぎて保存できません（この会議の間だけ使います）", error = true),
+        _ => Toasts.show("画像が大きすぎて保存できません（この会議の間だけ使います）", error = true),
         _ => ()
       )
       custom := Some(data)
@@ -93,7 +93,7 @@ object Background {
 
   /** 使えなかった: 知らせて、カメラのままに戻す. */
   private def giveUp(): Unit = {
-    Store.toast("背景を変えられませんでした（このブラウザ・端末では使えないか、読み込みに失敗しました）", error = true)
+    Toasts.show("背景を変えられませんでした（このブラウザ・端末では使えないか、読み込みに失敗しました）", error = true)
     mode := "none"
     Prefs.set("bg", "none")
     detach()

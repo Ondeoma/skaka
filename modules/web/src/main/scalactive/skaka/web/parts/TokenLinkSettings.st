@@ -5,21 +5,21 @@ import skaka.shared.*
 // API トークンでの連携（skuaka・skakapo）: そのサービスの API トークンを登録する
 case class Props(service: String, title: String, about: String, writeNeed: String)
 
-case class State(link: RV[Option[TokenLinkDto]] = RV(None), token: RV[String] = RV(""), busy: RV[Boolean] = RV(false))
+case class State(link: RV[Option[TokenLinkDto]] = RV(None), token: RV[String] = RV(""), act: ActionState = useAction())
 
 def initState() = State()
 
-def mounted(s: State, props: Props): Unit = Store.report(Api.tokenLink(props.service))(l => s.link := Some(l))
+def mounted(s: State, props: Props): Unit = Toasts.report(Api.tokenLink(props.service))(l => s.link := Some(l))
 
 def save(props: Props, s: State): Unit =
-  Store.submit(s.busy)(Api.linkToken(props.service, s.token.v.trim)) { l =>
+  Store.submit(s.act)(Api.linkToken(props.service, s.token.v.trim)) { l =>
     s.link := Some(l)
     s.token := ""
-    Store.toast(s"${AppNames.nameOf(props.service)}（${l.account.getOrElse("")}）と連携しました")
+    Toasts.show(s"${AppNames.nameOf(props.service)}（${l.account.getOrElse("")}）と連携しました")
   }
 
 def unlink(props: Props, s: State): Unit = Dialog.confirm(s"${AppNames.nameOf(props.service)} との連携をやめますか？（登録した API トークンを消します）", "やめる") {
-  Store.report(Api.unlinkToken(props.service))(_ => Store.report(Api.tokenLink(props.service))(l => s.link := Some(l)))
+  Toasts.report(Api.unlinkToken(props.service))(_ => Toasts.report(Api.tokenLink(props.service))(l => s.link := Some(l)))
 }
 
 def linked(s: State) = s.link.mapC(_.exists(_.linked))
@@ -41,7 +41,7 @@ def settingsUrl(s: State) = s.link.mapC(_.flatMap(_.url).getOrElse("") + "/setti
         「読み書き」の API トークンを作り、ここに貼り付けてください。トークンはサーバーで暗号化して保存します。</p>
       <div class="row">
         <input type="password" class="grow mono" v-model="s.token" :placeholder='props.service + "_…"' autocomplete="off">
-        <button type="submit" class="primary" :disabled="s.busy">連携する</button>
+        <button type="submit" class="primary" :disabled="s.act.busy">連携する</button>
       </div>
     </form>
   </section>

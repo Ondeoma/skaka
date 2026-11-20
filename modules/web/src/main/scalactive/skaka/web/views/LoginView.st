@@ -10,7 +10,7 @@ case class State(name: RV[String] = RV(""), email: RV[String] = RV(""), error: R
 
 def initState() = State()
 
-def param(k: String): Option[String] = Option(new dom.URL(dom.window.location.href).searchParams.get(k))
+def param(k: String): Option[String] = Router.queryParam(k).v
 def returnTo(): String = skaka.shared.SafePath.orElse(param("returnTo"))
 def loggedOut: Boolean = param("loggedOut").isDefined
 
@@ -39,7 +39,7 @@ def mounted(): Unit = pageTitle("ログイン")
       </template>
       <form v-if="dev" @submit.prevent="login(s)">
         <p class="muted small">開発用のログインです（IdP を設定していない環境だけで使えます）。</p>
-        <label class="field"><span>名前</span><input type="text" v-model="s.name" placeholder="山田 太郎" autofocus></label>
+        <label class="field"><span>名前</span><input type="text" v-model="s.name" placeholder="山田 太郎" v-focus></label>
         <label class="field"><span>メールアドレス（任意. 会議の予定に招待するときに使います）</span><input type="email" v-model="s.email"></label>
         <p v-if="s.error.mapC(_.nonEmpty)" class="error">{{ s.error }}</p>
         <p><button type="submit" class="primary">ログイン</button></p>
