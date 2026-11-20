@@ -38,7 +38,7 @@ final class MinutesService private (store: MinutesStore,
   import MinutesService.*
   import link.{Res, reject}
 
-  private def zone(u: User): ZoneId = Try(ZoneId.of(u.timezone)).getOrElse(ZoneId.of("Asia/Tokyo"))
+  private def zone(u: User): ZoneId = Zones.of(u.timezone)
 
   /** 議事録を頼む（会議を見られる人なら誰でも. 頼んだ人の skakapo の会話になる）. */
   def start(u: User, meetingId: UUID): IO[Either[AppError, MinutesDto]] =

@@ -1,5 +1,6 @@
 package skaka.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -110,9 +111,15 @@ final class RoomStore(xa: Transactor[IO], users: UserStore) extends TxStore(xa) 
       .flatMap(withOwnersC)
   )
 
-  /** 予定に結び付いた会議室のコード. */
-  def forEvent(eventId: UUID): IO[Option[String]] =
-    tx(sql"select code from room where event_id = $eventId order by created_at limit 1".query[String].option)
+  /** 予定に結び付いた会議室のコード（予定ごとに、いちばん古い会議室. 1回の問い合わせでまとめて読む）. */
+  def forEvents(eventIds: List[UUID]): IO[Map[UUID, String]] =
+    if eventIds.isEmpty then IO.pure(Map.empty)
+    else
+      tx(
+        sql"""select distinct on (event_id) event_id, code from room
+              where event_id = any(${eventIds.distinct.toArray}) order by event_id, created_at"""
+          .query[(UUID, String)].to[List].map(_.toMap)
+      )
 
   /** 新しい会議室（コードがぶつかったら作り直す）. */
   def create(owner: UUID, r: RoomReq, personal: Boolean = false, event: Option[RoomEventDto] = None): IO[Room] = {

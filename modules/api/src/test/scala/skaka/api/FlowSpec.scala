@@ -1,5 +1,6 @@
 package skaka.api
 
+import sbirds.db.*
 import cats.effect.*
 import cats.effect.std.Queue
 import cats.syntax.all.*
@@ -168,10 +169,33 @@ class FlowSpec extends munit.CatsEffectSuite {
           List("name" -> name, "email" -> email)*)
       r2 <- f.idp.run(Request[IO](Method.POST, uri"/authorize").withEntity(form))
       cb = location(r2)
-      r3 <- f.app.run(Request[IO](Method.GET, Uri(path = cb.path, query = cb.query)))
+      // ログインを始めたブラウザの Cookie がなければ断る（他人のログインを踏ませる攻撃を防ぐ）
+      r0 <- f.app.run(Request[IO](Method.GET, Uri(path = cb.path, query = cb.query)))
+      _ = assertEquals(r0.status, Status.BadRequest, "callback without the login cookie")
+      back = Request[IO](Method.GET, Uri(path = cb.path, query = cb.query))
+      r3 <- f.app.run(r1.cookies.foldLeft(back)((q, c) => q.addCookie(c.name, c.content)))
       _ = assertEquals(r3.status, Status.Found, "callback")
       _ = assertEquals(location(r3).renderString, "/r/abc")
     } yield r3.cookies.find(_.name == "skaka_session").map(_.content).getOrElse(fail("no session cookie"))
+  }
+
+  test("callback: IdP の error・error_description の文言は画面に出さない（固定の文言だけ）") {
+    val f = fixture()
+    f.app.run(Request[IO](
+      Method.GET,
+      uri"/auth/callback".withQueryParams(
+        Map("error" -> "access_denied_XYZ", "error_description" -> "管理者に 03-0000-0000 へ電話してください", "state" -> "s")
+      )
+    )).flatMap { r =>
+      assertEquals(r.status, Status.Unauthorized)
+      r.bodyText.compile.string.map { html =>
+        assert(
+          html.contains(skaka.core.ErrorCode.IdpRefused.message) && html.contains(skaka.core.ErrorCode.IdpRefused.code),
+          html
+        )
+        assert(!html.contains("access_denied_XYZ") && !html.contains("03-0000-0000"), html)
+      }
+    }
   }
 
   /** token は Cookie のセッション（Bearer で始まれば API トークン）. None ならログインしていない（画面からの要求）. */
@@ -861,14 +885,8 @@ class FlowSpec extends munit.CatsEffectSuite {
       chunked <- echo.run(Request[IO](
         Method.POST,
         uri"/api/echo"
-      ).withBodyStream(fs2.Stream.emits(big.getBytes).covary[IO])).attempt
-      _ = assert(
-        chunked.left.exists(e =>
-          e.isInstanceOf[sbirds.shared.AppError] &&
-            e.asInstanceOf[sbirds.shared.AppError].code == skaka.core.ErrorCode.RequestTooLarge
-        ),
-        chunked
-      )
+      ).withBodyStream(fs2.Stream.emits(big.getBytes).covary[IO]))
+      _ = assertEquals(chunked.status, Status.PayloadTooLarge)
       page <- echo.run(Request[IO](Method.GET, uri"/page"))
       _ = assertEquals(
         List("X-Frame-Options", "X-Content-Type-Options").map(h => page.headers.get(CIString(h)).map(_.head.value)),

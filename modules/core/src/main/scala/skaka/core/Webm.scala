@@ -19,7 +19,7 @@ object Webm {
 
   /** 要素の id（先頭の印のビットを含む）と長さ. */
   private def readId(b: Array[Byte], at: Int): Option[(Long, Int)] =
-    if at >= b.length then None
+    if at < 0 || at >= b.length then None
     else {
       val first = b(at) & 0xff
       val len = Integer.numberOfLeadingZeros(first) - 23
@@ -30,7 +30,7 @@ object Webm {
 
   /** 要素の大きさ（印のビットを除く. すべて 1 は「不明」で None）と長さ. */
   private def readSize(b: Array[Byte], at: Int): Option[(Option[Long], Int)] =
-    if at >= b.length then None
+    if at < 0 || at >= b.length then None
     else {
       val first = b(at) & 0xff
       val len = Integer.numberOfLeadingZeros(first) - 23
@@ -69,7 +69,8 @@ object Webm {
       for {
         (id0, l0) <- readId(head, 0) if id0 == EbmlId
         (s0, sl0) <- readSize(head, l0)
-        ebmlLen <- s0
+        // 大きさは利用者が送った中身のまま. head に収まらないものは読まない（Int に直すと負になり、位置が戻る）
+        ebmlLen <- s0 if ebmlLen <= head.length
         segAt = l0 + sl0 + ebmlLen.toInt
         (sid, sl) <- readId(head, segAt) if sid == SegmentId
         segSizeAt = segAt + sl
@@ -95,7 +96,8 @@ object Webm {
               if dataAt + size > b.length then None
               else patchInfo(b, segSizeAt, segSize, ssl, at + il, sl, dataAt, size.toInt, ms)
             case _ if id == SeekHeadId || id == CuesId || id == ClusterId => None
-            case Some((Some(size), sl)) => loop(at + il + sl + size.toInt)
+            // 次の要素は必ず先へ進む（大きさを Int に直して負になると、同じ位置を読み続けて終わらない）
+            case Some((Some(size), sl)) if size <= b.length - at => loop(at + il + sl + size.toInt)
             case _ => None
           }
       }

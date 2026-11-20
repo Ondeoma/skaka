@@ -63,7 +63,7 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
 
   private def enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
-  private def zone(u: User): ZoneId = Try(ZoneId.of(u.timezone)).getOrElse(ZoneId.of("Asia/Tokyo"))
+  private def zone(u: User): ZoneId = Zones.of(u.timezone)
 
   /** 予定に会議室を付ける: 場所に会議室の URL を入れる（場所があれば後ろに足す）. すでに付いていればその会議室. */
   def attach(u: User, eventId: UUID): Res[RoomDto] =
@@ -175,9 +175,7 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
       os = js.asArray.toList.flatten.map(_.hcursor).filterNot(o =>
         o.get[Boolean]("busy").contains(true) || o.get[String]("myResponse").contains("declined")
       )
-      byEvent <- EitherT.liftF(os.flatMap(_.get[UUID]("eventId").toOption).distinct.traverse(id =>
-        rooms.forEvent(id).map(id -> _)
-      ).map(_.toMap))
+      byEvent <- EitherT.liftF(rooms.forEvents(os.flatMap(_.get[UUID]("eventId").toOption)))
     } yield os.flatMap { o =>
       (o.get[UUID]("eventId"), o.get[String]("title"), o.get[String]("start"), o.get[String]("end")).mapN {
         (id, title, s, e) =>
@@ -193,7 +191,7 @@ final class SkuakaRoutes(d: ApiRoutes.Deps, roomRoutes: RoomRoutes) extends Rout
               o.get[Boolean]("recurring").getOrElse(false),
               o.get[Boolean]("canEdit").getOrElse(false),
               o.get[String]("myResponse").toOption,
-              RoomLinks.find(cfg.publicUrl, loc).orElse(byEvent.get(id).flatten)
+              RoomLinks.find(cfg.publicUrl, loc).orElse(byEvent.get(id))
             )
           }
       }.toOption

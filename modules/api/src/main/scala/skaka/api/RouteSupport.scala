@@ -1,23 +1,23 @@
 package skaka.api
 
 import cats.effect.*
-import io.circe.Decoder
 import org.http4s.*
-import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.dsl.Http4sDsl
-import org.typelevel.ci.CIString
 import org.http4s.headers.`WWW-Authenticate`
-import sbirds.http.Errors
+import sbirds.http.{Csrf, Errors, RouteHelpers}
 import sbirds.shared.AppError
 import skaka.core.ErrorCode
 import skaka.db.*
 
-import java.util.UUID
-
 /**
- * *Routes に共通の補助（エラー応答・認証・リクエスト本文）.
+ * *Routes に共通の補助（エラー応答・認証）. 本文・クエリ・パスの UUID・302 は sbirds.http.RouteHelpers.
  */
-trait RouteSupport extends Http4sDsl[IO] {
+trait RouteSupport extends RouteHelpers {
+
+  protected def bodyInvalid: sbirds.shared.ErrorCode = ErrorCode.RequestBodyInvalid
+
+  // 本文の読み取りの途中のエラー（大きすぎる本文を含む）は、これまでどおり RequestBodyInvalid にする
+  override protected def bodyKeepsAppError: Boolean = false
+
   protected def sessions: SessionAuth
 
   /** エラーの応答（コード付きでログに出る）. detail を省くとコードの既定の文言. */
@@ -27,7 +27,7 @@ trait RouteSupport extends Http4sDsl[IO] {
   protected def fail(e: AppError): IO[Response[IO]] = Errors.respond(e)
 
   /** 画面からの更新の要求に付ける見出し. 他のサイトのフォームからは付けられない（CORS の事前確認が要る）ので CSRF を防げる. */
-  private val csrfHeader = CIString("X-Skaka")
+  private val csrf = Csrf.Policy.headerOnly("X-Skaka")
 
   private def readOnly(req: Request[IO]): Boolean = Set(Method.GET, Method.HEAD).contains(req.method)
 
@@ -54,11 +54,11 @@ trait RouteSupport extends Http4sDsl[IO] {
     }
 
   /** 画面からの更新の要求か（CSRF の確認. ログインしていない人の要求にも使う）. */
-  protected def fromScreen(req: Request[IO]): Boolean = req.headers.get(csrfHeader).isDefined
+  protected def fromScreen(req: Request[IO]): Boolean = Csrf.fromOwnScreen(req, csrf)
 
   private def principal(req: Request[IO])(f: Principal => IO[Response[IO]]): IO[Response[IO]] = {
     val bearer = sessions.bearer(req).isDefined
-    if !bearer && !readOnly(req) && req.headers.get(csrfHeader).isEmpty then
+    if !bearer && Csrf.foreign(req, csrf) then
       err(ErrorCode.CrossSiteRequest)
     else
       sessions.fromRequest(req).flatMap {
@@ -72,17 +72,9 @@ trait RouteSupport extends Http4sDsl[IO] {
   /** 操作したユーザーを、トレース（スパンの属性）とこの中のログに載せる. */
   private def as[A](u: User)(fa: IO[A]): IO[A] = sbirds.observe.Telemetry.withUser(u.id.toString, u.name)(fa)
 
-  protected def body[A: Decoder](req: Request[IO])(f: A => IO[Response[IO]]): IO[Response[IO]] =
-    req.as[A].attempt.flatMap {
-      case Left(e) => err(ErrorCode.RequestBodyInvalid, s"リクエストの内容が正しくありません: ${e.getMessage.take(200)}")
-      case Right(b) => f(b)
-    }
-
-  protected def param(req: Request[IO], k: String): Option[String] = req.params.get(k).map(_.trim).filter(_.nonEmpty)
-
-  protected object UuidVar {
-    def unapply(s: String): Option[UUID] = scala.util.Try(UUID.fromString(s)).toOption
-  }
+  /** 一覧の件数（limit. 1〜200、省くと 50）. */
+  protected def limitParam(req: Request[IO]): Int =
+    param(req, "limit").flatMap(_.toIntOption).map(_.max(1).min(200)).getOrElse(50)
 
   /** 結果が Right なら f、Left なら 400. */
   protected def valid[A](e: Either[String, A])(f: A => IO[Response[IO]]): IO[Response[IO]] =

@@ -145,7 +145,7 @@ final class RoomRoutes(d: ApiRoutes.Deps) extends RouteSupport {
 
   private def getMeetings(req: Request[IO]): IO[Response[IO]] =
     authed(req) { u =>
-      val limit = param(req, "limit").flatMap(_.toIntOption).map(_.max(1).min(200)).getOrElse(50)
+      val limit = limitParam(req)
       param(req, "room") match {
         case Some(c) => withRoom(c)((r, _) =>
             meetings.list(u.id, Some(r.id), param(req, "before").flatMap(instant), limit).flatMap(Ok(_))

@@ -2,6 +2,7 @@ package skaka.api
 
 import cats.effect.*
 import org.http4s.*
+import sbirds.http.RateLimitConfig
 import skaka.auth.TurnCredentials
 import skaka.db.*
 import skaka.shared.*
@@ -17,7 +18,8 @@ final case class ApiConfig(cookieSecure: Boolean,
                            devLogin: Boolean = false,
                            version: String = "0.1.0",
                            ice: IceConfig = IceConfig(),
-                           oauthClients: List[OAuthClient] = Nil)
+                           oauthClients: List[OAuthClient] = Nil,
+                           rateLimit: RateLimitConfig = RateLimitConfig())
 
 /**
  * WebRTC の ICE サーバー. servers は STUN（と固定の TURN）. turnUrls と turnSecret があれば、
@@ -46,6 +48,13 @@ object TextResponse {
       media,
       Charset.`UTF-8`
     ))
+}
+
+/** タイムゾーン（利用者の設定の値. 読めなければ日本時間）. */
+object Zones {
+  val Default: java.time.ZoneId = java.time.ZoneId.of("Asia/Tokyo")
+
+  def of(tz: String): java.time.ZoneId = scala.util.Try(java.time.ZoneId.of(tz)).getOrElse(Default)
 }
 
 /** 入力の確認. */

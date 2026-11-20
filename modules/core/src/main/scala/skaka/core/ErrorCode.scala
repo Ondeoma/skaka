@@ -10,6 +10,7 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case OidcNotConfigured extends ErrorCode("SKAKA-1001", 503, "OIDC が設定されていません")
   case LoginCodeStateRequired extends ErrorCode("SKAKA-1002", 400, "code と state が必要です")
   case LoginExpired extends ErrorCode("SKAKA-1003", 400, "ログインの有効期限が切れました。もう一度ログインしてください")
+  case LoginBrowserMismatch extends ErrorCode("SKAKA-1029", 400, "ログインを始めたブラウザと違います。もう一度ログインしてください")
   case IdpRefused extends ErrorCode("SKAKA-1027", 401, "IdP がログインを断りました")
   case LoginFailed extends ErrorCode("SKAKA-1004", 401, "IdP からの応答を確かめられませんでした。しばらくしてからもう一度お試しください")
   case LoginDenied extends ErrorCode("SKAKA-1005", 403, "このアカウントではログインできません")
@@ -35,6 +36,7 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case InvalidInput extends ErrorCode("SKAKA-1025", 400, "入力が正しくありません")
   case RequestTooLarge extends ErrorCode("SKAKA-1026", 413, "リクエストが大きすぎます")
   case PageNotFound extends ErrorCode("SKAKA-1028", 404, "ページが見つかりません")
+  case TooManyRequests extends ErrorCode("SKAKA-1030", 429, "短い時間に要求が多すぎます。しばらく待ってからもう一度試してください")
   case RoomNotFoundByCode extends ErrorCode("SKAKA-2001", 404, "会議室が見つかりません（URL・コードを確かめてください）")
   case RoomNotFound extends ErrorCode("SKAKA-2002", 404, "会議室が見つかりません")
   case RoomOwnerOnly extends ErrorCode("SKAKA-2003", 403, "会議室の持ち主だけができます")
@@ -105,4 +107,5 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case RecordingSweepFailed extends ErrorCode("SKAKA-9005", 500, "録画の見回りに失敗しました")
   case MeetingNoticeFailed extends ErrorCode("SKAKA-9006", 500, "会議の開始を知らせられませんでした")
   case OidcDiscoveryFailed extends ErrorCode("SKAKA-9007", 503, "OIDC の discovery に失敗しました。ログインのときにもう一度試します")
+  case McpToolFailed extends ErrorCode("SKAKA-9008", 500, "MCP のツールの実行に失敗しました")
 }

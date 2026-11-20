@@ -1,21 +1,19 @@
 package skaka.app
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import com.comcast.ip4s.*
 import doobie.implicits.*
-import fs2.io.file.Path
 import org.http4s.*
-import org.http4s.dsl.io.*
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.server.staticcontent.*
 import skaka.api.*
 import sbirds.auth.{Crypto, OidcClient, OidcConfig}
 import skaka.auth.SecretBox
 import skaka.db.*
 import sbirds.observe.{HttpClientTelemetry, HttpTelemetry, Metrics, RumRoutes, Telemetry}
-import sbirds.http.Errors
+import sbirds.http.{Errors, Health, Spa}
 import skaka.core.ErrorCode
 
 import scala.concurrent.duration.*
@@ -119,7 +117,7 @@ object Main extends IOApp.Simple {
           case Left(e) => Errors.report(ErrorCode.OidcDiscoveryFailed, e.getMessage)
         }))
         _ <- purgeLoop(users).background
-        app = healthRoutes(xa) <+> ApiRoutes(ApiRoutes.Deps(
+        app = health(xa) <+> ApiRoutes(ApiRoutes.Deps(
           oidc,
           users,
           rooms,
@@ -137,7 +135,9 @@ object Main extends IOApp.Simple {
           stt,
           minutes
         )) <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, sess).routes
-        all = Guard(cfg.staticDir.fold(app)(d => app <+> spa(d)))
+        // ログイン・OAuth の認可は IP ごとに回数を制限する（本文の上限・ヘッダーの内側）
+        limited = RateLimit(app, cfg.api.rateLimit)
+        all = Guard(cfg.staticDir.fold(limited)(d => limited <+> spa(d)))
         // 会議の WebSocket（/ws）は接続の数（skaka.ws.connections）で見るので、スパンにはしない
         traced <- HttpTelemetry.middleware(List("/api", "/auth", "/oauth", "/mcp"))
         _ <- EmberServerBuilder.default[IO]
@@ -200,33 +200,18 @@ object Main extends IOApp.Simple {
       Metrics.gauge("skaka.lobby.waiting", "待機室で待っている人の数", 15.seconds)(hub.stats.map(_._3))
     ).sequence_
 
-  private def healthRoutes(xa: doobie.Transactor[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case GET -> Root / "healthz" =>
-      sql"select 1".query[Int].unique.transact(xa).timeout(3.seconds).attempt.flatMap {
-        case Right(_) => IO.pure(TextResponse(Status.Ok, "ok"))
-        case Left(e) => Errors.report(ErrorCode.HealthCheckFailed, e.toString, e).as(TextResponse(
-            Status.ServiceUnavailable,
-            "database unavailable"
-          ))
-      }
-  }
+  private def health(xa: doobie.Transactor[IO]): HttpRoutes[IO] =
+    Health.routes(Database.ping(xa), "ok", e => Errors.report(ErrorCode.HealthCheckFailed, e.toString, e))
 
   /** 期限の切れたセッション・ログイン途中の状態を消す（1時間ごと）. */
   private def purgeLoop(users: UserStore): IO[Unit] =
     Periodic.run(1.minute, 1.hour, ErrorCode.PurgeFailed)(IO.realTimeInstant.flatMap(users.purgeExpired)).void
 
   /** ビルド済みの画面の配信. 存在しないパスは index.html（SPA）. */
-  private def spa(dir: String): HttpRoutes[IO] = {
-    val files = fileService[IO](FileService.Config(dir))
-    val index = HttpRoutes.of[IO] {
-      case req @ GET -> path
-          if !path.segments.headOption.map(_.decoded()).exists(Set("api", "auth", "oauth", "ws", "mcp", "healthz")) =>
-        StaticFile.fromPath(Path(dir) / "index.html", Some(req)).getOrElseF(Errors.respond(ErrorCode.PageNotFound))
-    }
-    HttpRoutes[IO] { req =>
-      val cc =
-        if req.pathInfo.renderString.startsWith("/assets/") then "public, max-age=31536000, immutable" else "no-cache"
-      (files <+> index).run(req).map(_.putHeaders("Cache-Control" -> cc))
-    }
-  }
+  private def spa(dir: String): HttpRoutes[IO] =
+    Spa.routes(
+      dir,
+      Spa.firstSegment("api", "auth", "oauth", "ws", "mcp", "healthz"),
+      notFound = Errors.respond(ErrorCode.PageNotFound)
+    )
 }

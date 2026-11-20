@@ -1,5 +1,6 @@
 package skaka.api
 
+import sbirds.db.*
 import skaka.core.ErrorCode
 import sbirds.shared.AppError
 import cats.data.EitherT
@@ -16,7 +17,6 @@ import java.time.{Instant, ZoneId}
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 import scala.concurrent.duration.*
-import scala.util.Try
 
 /**
  * skawau（ファイル共有）の設定. url は画面から開く URL（許可の画面・録画のリンク）、internalUrl はこのサーバーから呼ぶ URL.
@@ -50,7 +50,7 @@ final class Recorder private (store: RecordingStore,
   private def stamp(at: Instant, tz: String): String =
     DateTimeFormatter.ofPattern(
       "yyyy-MM-dd HH-mm"
-    ).withZone(Try(ZoneId.of(tz)).getOrElse(ZoneId.of("Asia/Tokyo"))).format(at)
+    ).withZone(Zones.of(tz)).format(at)
 
   /** 録画を始める（会議に主催者として入っている人だけ. 1つの会議室で同時に1つ）. */
   def start(u: User, room: Room, mime: String, share: Boolean): IO[Either[AppError, Recording]] =

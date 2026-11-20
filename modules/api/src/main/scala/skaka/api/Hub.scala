@@ -216,8 +216,7 @@ object Hub {
                          seen: Map[String, Instant] = Map.empty,
                          keys: Map[String, String] = Map.empty)
 
-  /** Hub と、DB に履歴を書く裏の処理. */
-  /** transcription は文字起こし（Whisper）が使えるか. */
+  /** Hub と、DB に履歴を書く裏の処理. transcription は文字起こし（Whisper）が使えるか. */
   def resource(rooms: RoomStore,
                meetings: MeetingStore,
                notices: Notices = Notices.none,

@@ -6,7 +6,6 @@ import cats.effect.*
 import cats.syntax.all.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.headers.Location
 import sbirds.auth.Crypto
 import skaka.db.*
 import skaka.shared.*
@@ -138,7 +137,7 @@ final class SkawauRoutes(d: ApiRoutes.Deps) extends RouteSupport {
 
   private def getRecordings(req: Request[IO]): IO[Response[IO]] =
     authed(req) { u =>
-      val limit = param(req, "limit").flatMap(_.toIntOption).map(_.max(1).min(200)).getOrElse(50)
+      val limit = limitParam(req)
       (param(req, "meeting"), param(req, "room")) match {
         case (Some(m), _) =>
           scala.util.Try(UUID.fromString(m)).toOption.fold(err(ErrorCode.RecordingMeetingIdInvalid))(id =>
@@ -173,9 +172,6 @@ final class SkawauRoutes(d: ApiRoutes.Deps) extends RouteSupport {
     )
 
   private def callback: String = s"${cfg.publicUrl}/api/integrations/skawau/callback"
-
-  private def redirect(to: String): IO[Response[IO]] =
-    IO.pure(Response[IO](Status.Found).putHeaders(Location(Uri.unsafeFromString(to))))
 
   /** 設定の画面へ戻る（結果を skawau=… に付ける）. 戻り先は同じサイトのパスだけ. */
   private def done(returnTo: String, result: String): IO[Response[IO]] = {

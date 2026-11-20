@@ -2,8 +2,7 @@ package skaka.api
 
 import cats.effect.*
 import org.http4s.*
-import org.typelevel.ci.CIString
-import sbirds.http.Errors
+import sbirds.http.{BodyLimit, SecurityHeaders}
 import sbirds.shared.AppError
 import skaka.core.ErrorCode
 
@@ -46,32 +45,18 @@ object Guard {
     ).mkString("; ")
   }
 
-  def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] = cats.data.Kleisli { (req: Request[IO]) =>
-    val limit = limitOf(req)
-    if req.contentLength.exists(_ > limit) then
-      cats.data.OptionT.liftF(Errors.respond(ErrorCode.RequestTooLarge))
-    else {
-      // Content-Length がなく（chunked で）送られても、上限を超えたところで止める
-      val body = req.body.chunks.evalMapAccumulate(0L) {
-        (n, c) =>
-          {
-            val m = n + c.size
-            if m > limit then IO.raiseError(AppError(ErrorCode.RequestTooLarge)) else IO.pure(m -> c)
-          }
-      }.flatMap((_, c) => fs2.Stream.chunk(c))
-      routes(req.withBodyStream(body)).map(secure)
-    }
-  }
+  /** どの応答にも付けるヘッダー（HTML には X-Frame-Options と CSP も. 応答が自分で付けた CSP はそのまま）. */
+  val headers: SecurityHeaders.Policy = SecurityHeaders.Policy(
+    referrer = Some("same-origin"),
+    csp = Some(PageCsp),
+    cspHtmlOnly = true,
+    frameOptionsHtmlOnly = true
+  )
 
-  /** どの応答にも付けるヘッダー（HTML には CSP も. 個別に付けたものはそのまま）. */
-  def secure(r: Response[IO]): Response[IO] = {
-    val html = r.contentType.exists(_.mediaType == MediaType.text.html)
-    val base = r.putHeaders("X-Content-Type-Options" -> "nosniff", "Referrer-Policy" -> "same-origin")
-    if !html then base
-    else {
-      val csp = if r.headers.get(CIString("Content-Security-Policy")).isDefined then Nil
-      else List[Header.ToRaw]("Content-Security-Policy" -> PageCsp)
-      base.putHeaders(("X-Frame-Options" -> "DENY": Header.ToRaw) :: csp*)
-    }
-  }
+  /** 本文が上限を超えた要求は 413 で断り（Content-Length がなく chunked で送られても、超えたところで止める）、応答にヘッダーを付ける. */
+  def apply(routes: HttpRoutes[IO]): HttpRoutes[IO] =
+    BodyLimit(
+      req => Some(limitOf(req)),
+      (_, _) => AppError(ErrorCode.RequestTooLarge)
+    )(SecurityHeaders(headers)(routes))
 }

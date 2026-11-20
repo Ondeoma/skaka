@@ -135,6 +135,8 @@ Docker: `scripts/dist.sh` のあと `docker build -f deploy/docker/app.Dockerfil
 | `SKAKAPO_URL` | 議事録・要約を頼む skakapo の URL（未設定なら議事録の機能を出さない） |
 | `SKAKAPO_INTERNAL_URL` / `SKAKAPO_REQUEST_TYPE` | このサーバーから見た skakapo の URL（既定は `SKAKAPO_URL`）・議事録を頼むときの依頼の種類（項目 `title`・`description` を持つもの. 既定 `other`） |
 | `OAUTH_CLIENTS` | skaka を使う外部のサービス（skuaka）. `[{"id":"skuaka","secret":"…（16文字以上）","redirectUri":"https://…/api/integrations/skaka/callback","name":"skuaka","scopes":["read","write"]}]` |
+| `RATE_LIMIT_AUTH` / `RATE_LIMIT_PUBLIC` | IP ごとの1分あたりの回数の上限。ログインと OAuth の認可の画面（`/auth/…`・`/oauth/authorize`、既定 20）と、OAuth のトークンの発行・失効（`/oauth/token`・`/oauth/revoke`）・ログインなしで使える会議室の入口（`/api/rooms/{コード}/entry`・`join`）（既定 120）。0 で制限しない。超えたら 429 |
+| `TRUSTED_PROXIES` | リバースプロキシの IP か CIDR（カンマ区切り）。そこから来た要求だけ `X-Forwarded-For` から利用者の IP を読む。未設定なら直接つないできた相手の IP で数える（リバースプロキシの後ろに置くときは必ず設定する） |
 | `HTTP_PORT` | 待ち受けるポート（既定 8080） |
 | `STATIC_DIR` | ビルド済みの画面（`dist/static`） |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | ログ・メトリクス・トレースの送り先（skorimako の URL と `Authorization=Bearer sko_…`（ingest のキー））。未設定なら送らない。そのほか OpenTelemetry の標準の `OTEL_*` が使える |

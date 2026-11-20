@@ -62,4 +62,13 @@ class WebmSpec extends munit.FunSuite {
     assertEquals(Webm.withDuration(file(unknown, info).dropRight(3), 1000), None)
     assertEquals(Webm.withDuration(file(unknown, info ++ cluster), 0), None)
   }
+
+  test("大きさが異常な要素（Int に直すと負になる）があっても、読み続けずに None を返す") {
+    // Void（0xec）の大きさを 8 バイトで 0xfffffff7（Int では -9）にすると、次に読む位置が同じ所に戻る
+    val back = bytes(0xec, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xf7)
+    assertEquals(Webm.withDuration(file(unknown, back ++ info ++ cluster), 1000), None)
+    // EBML のヘッダーの大きさが異常なもの
+    val bad = bytes(0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xf0) ++ info
+    assertEquals(Webm.withDuration(bad, 1000), None)
+  }
 }

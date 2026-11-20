@@ -99,23 +99,7 @@ object Dialog {
 }
 
 /** この端末だけの設定（localStorage. 使えないときは既定値）. */
-object Prefs {
-  def get(key: String, default: String): String =
-    scala.util.Try(Option(dom.window.localStorage.getItem("skaka." + key))).toOption.flatten.getOrElse(default)
-
-  def set(key: String, value: String): Unit = scala.util.Try(dom.window.localStorage.setItem("skaka." + key, value))
-}
+object Prefs extends sbirds.web.LocalPrefs("skaka")
 
 /** 画面の色（自動 = OS の設定、ライト、ダーク）. */
-object Theme {
-  val current: RV[String] = RV(Prefs.get("theme", "system"))
-
-  def apply(): Unit = {
-    val el = dom.document.documentElement
-    if (current.v == "system") el.removeAttribute("data-theme") else el.setAttribute("data-theme", current.v)
-  }
-
-  def set(v: String): Unit = { current := v; Prefs.set("theme", v); apply() }
-
-  val options: List[(String, String)] = List("system" -> "自動（OS に合わせる）", "light" -> "ライト", "dark" -> "ダーク")
-}
+object Theme extends sbirds.web.ThemeSwitch(Prefs, sbirds.web.ThemeSwitch.Plain)
