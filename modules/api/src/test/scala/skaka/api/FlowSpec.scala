@@ -468,7 +468,10 @@ class FlowSpec extends munit.CatsEffectSuite {
       r2 <- call(a, Method.POST, s"/api/skuaka/events/$other/room").flatMap(json[RoomDto])
       _ = assertEquals(r2.code, r1.code)
       up <- call(a, Method.GET, "/api/skuaka/events?from=2026-11-19&to=2026-11-26").flatMap(json[List[UpcomingDto]])
-      _ = assertEquals(up.map(u => (u.title, u.room)).toSet, Set(("設計レビュー", Some(sc.room.code)), ("朝会", Some(r1.code))))
+      _ = assertEquals(
+        up.map(u => (u.title, u.room)).toSet[(String, Option[String])],
+        Set[(String, Option[String])](("設計レビュー", Some(sc.room.code)), ("朝会", Some(r1.code)))
+      )
       // 連携をやめると使えない
       _ <- call(a, Method.DELETE, "/api/skuaka")
       gone <- call(a, Method.GET, "/api/skuaka/events")

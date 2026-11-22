@@ -41,7 +41,7 @@ skaka は、チームのための Web 会議システムです（ブラウザだ
   `POST /mcp`（Streamable HTTP）で、MCP に対応した AI アシスタントから会議室・会議の記録・会議の予定を扱える
 - 画面の色（自動・ライト・ダーク）、スマホの幅
 
-技術: Scala 3.3 LTS、Cats Effect 3、http4s 1.0（マイルストーン版. WebSocket）、doobie、Flyway、PostgreSQL 17、
+技術: Scala 3.9 LTS、Cats Effect 3、http4s 1.0（マイルストーン版. WebSocket）、doobie、Flyway、PostgreSQL 17、
 Scala.js + [Scalactive](https://github.com/Ondeoma/scalactive)、Vite、WebRTC（メッシュ）。設計は [docs/design.md](docs/design.md) を参照してください。
 
 兄弟のシステム: skea（タスク管理）、skiwi（Wiki）、skawau（ファイル共有）、skuaka（カレンダー）、skakapo（AI エージェント）。
