@@ -121,9 +121,8 @@ final case class RoomEntryDto(code: String,
 /** 入る. name はゲストの名前（ログインしている人は省く）. */
 final case class JoinReq(name: Option[String]) derives Encoder.AsObject, Decoder
 
-/** WebRTC の ICE サーバー（STUN・TURN）. */
-final case class IceServer(urls: List[String], username: Option[String] = None, credential: Option[String] = None)
-  derives ConfiguredCodec
+/** WebRTC の ICE サーバー（sbirds-lib）. */
+export sbirds.shared.IceServer
 
 /** 入るための切符（WebSocket /ws/{ticket} で使う. 1回だけ・60秒）. */
 /** ticket は WebSocket /ws/{ticket} に1回だけ使う. key は会議中に文字起こしの音声を送るときの鍵（URL に載せないよう別にしてある）. */

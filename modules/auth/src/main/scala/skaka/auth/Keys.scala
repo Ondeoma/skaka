@@ -1,9 +1,6 @@
 package skaka.auth
 
-import java.nio.charset.StandardCharsets
 import java.util.Base64
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 /** skaka の API トークン（skaka_ で始まる）. */
 object ApiKeys extends sbirds.auth.ApiKeys("skaka_")
@@ -19,13 +16,4 @@ final class SecretBox(secret: String) {
 
   /** 鍵が違う・壊れているときは None. */
   def open(box: Array[Byte]): Option[String] = inner.decrypt("v1:" + Base64.getEncoder.encodeToString(box))
-}
-
-/** TURN の一時的な認証情報（coturn の use-auth-secret. HMAC-SHA1 の Base64）. */
-object TurnCredentials {
-  def password(secret: String, user: String): String = {
-    val mac = Mac.getInstance("HmacSHA1")
-    mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA1"))
-    Base64.getEncoder.encodeToString(mac.doFinal(user.getBytes(StandardCharsets.UTF_8)))
-  }
 }

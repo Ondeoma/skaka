@@ -6,7 +6,6 @@ import cats.effect.*
 import cats.syntax.all.*
 import skaka.api.*
 import sbirds.auth.OidcConfig
-import skaka.shared.IceServer
 
 import scala.concurrent.duration.*
 
@@ -27,11 +26,7 @@ object Config {
       devLogin <- devLogin(pub)
       // IP ごとの回数の制限（RATE_LIMIT_AUTH・RATE_LIMIT_PUBLIC・TRUSTED_PROXIES. 0 で制限しない）
       rate <- sbirds.http.RateLimitConfig.fromEnv()
-      ice <- opt("ICE_SERVERS").fold(Right(IceConfig().servers))(j =>
-        io.circe.parser.decode[List[IceServer]](j).left.map(e =>
-          s"ICE_SERVERS を読めません（JSON の配列 [{\"urls\": [...]}]）: ${e.getMessage}"
-        )
-      )
+      ice <- IceConfig.fromEnv()
       clients <-
         OAuthClient.fromEnv(OAuthClient.Rules(itemError = oauthItemError, scopeError = Some(_ => oauthItemError)))
       oidc <- (opt("OIDC_ISSUER"), opt("OIDC_CLIENT_ID"), opt("OIDC_CLIENT_SECRET")) match {
@@ -73,7 +68,7 @@ object Config {
         publicUrl = pub,
         sessionTtl = int("SESSION_DAYS").getOrElse(14).days,
         devLogin = devLogin,
-        ice = IceConfig(ice, list("TURN_URLS"), opt("TURN_SECRET"), int("TURN_TTL_HOURS").getOrElse(12).hours),
+        ice = ice,
         oauthClients = clients,
         rateLimit = rate
       ),
